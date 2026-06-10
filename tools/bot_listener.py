@@ -6,7 +6,8 @@ TOKEN    = os.environ["TELEGRAM_BOT_TOKEN"]
 CHAT_ID  = str(os.environ["TELEGRAM_CHAT_ID"])
 GH_TOKEN = os.environ["GH_TOKEN"]
 REPO     = "sajadrafiei97-eng/think-tank-monitor"
-OFFSET_FILE = ".tmp/bot_offset.json"
+OFFSET_FILE   = ".tmp/bot_offset.json"
+SCHEDULE_FILE = "config_schedule.json"
 
 HELP_TEXT = (
     "دستورات موجود:\n\n"
@@ -14,6 +15,9 @@ HELP_TEXT = (
     "/run 3 — هر دو سیستم، ۳ روز اخیر\n"
     "/run_ar 7 — فقط عربی، ۷ روز اخیر\n"
     "/run_en 5 — فقط انگلیسی، ۵ روز اخیر\n"
+    "/schedule on — روشن کردن ارسال خودکار ۹ صبح\n"
+    "/schedule off — خاموش کردن ارسال خودکار ۹ صبح\n"
+    "/status — وضعیت فعلی\n"
     "/help — این راهنما"
 )
 
@@ -29,6 +33,18 @@ def save_offset(offset: int):
     os.makedirs(".tmp", exist_ok=True)
     with open(OFFSET_FILE, "w") as f:
         json.dump({"offset": offset}, f)
+
+
+def load_schedule_enabled() -> bool:
+    if os.path.exists(SCHEDULE_FILE):
+        with open(SCHEDULE_FILE) as f:
+            return json.load(f).get("enabled", True)
+    return True
+
+
+def save_schedule_enabled(enabled: bool):
+    with open(SCHEDULE_FILE, "w") as f:
+        json.dump({"enabled": enabled}, f, indent=2)
 
 
 def get_updates(offset: int) -> list:
@@ -63,18 +79,38 @@ def trigger_workflow(days: int, system: str) -> bool:
     return r.status_code == 204
 
 
-def parse_command(text: str):
-    """Returns (days, system) or None if not a valid /run command."""
+def handle_command(text: str) -> bool:
+    """Process one command. Returns True if offset file should be saved."""
     parts = text.strip().split()
     if not parts:
-        return None
+        return False
 
     cmd = parts[0].lower()
 
+    # Help / start
     if cmd in ("/help", "/start"):
         send_message(HELP_TEXT)
-        return None
+        return True
 
+    # Status
+    if cmd == "/status":
+        enabled = load_schedule_enabled()
+        state = "روشن ✅" if enabled else "خاموش ⛔"
+        send_message(f"وضعیت ارسال خودکار ۹ صبح: {state}")
+        return True
+
+    # Schedule toggle
+    if cmd == "/schedule":
+        if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
+            send_message("استفاده صحیح:\n/schedule on\n/schedule off")
+            return True
+        enabled = parts[1].lower() == "on"
+        save_schedule_enabled(enabled)
+        state = "روشن ✅" if enabled else "خاموش ⛔"
+        send_message(f"ارسال خودکار ۹ صبح {state} شد.\n(تغییر چند ثانیه دیگر در گیت ذخیره می‌شود)")
+        return True
+
+    # Run commands
     if cmd == "/run":
         system = "both"
     elif cmd == "/run_ar":
@@ -82,7 +118,7 @@ def parse_command(text: str):
     elif cmd == "/run_en":
         system = "english"
     else:
-        return None
+        return False
 
     days = 1
     if len(parts) >= 2:
@@ -90,9 +126,21 @@ def parse_command(text: str):
             days = max(1, min(int(parts[1]), 30))
         except ValueError:
             send_message(f"عدد نامعتبر: {parts[1]}\nمثال: /run 7")
-            return None
+            return True
 
-    return days, system
+    labels = {"both": "عربی + انگلیسی", "arabic": "عربی", "english": "انگلیسی"}
+    if trigger_workflow(days, system):
+        period = f"{days} روز اخیر" if days > 1 else "امروز"
+        send_message(
+            f"✅ شروع شد\n"
+            f"سیستم: {labels[system]}\n"
+            f"بازه: {period}\n\n"
+            f"نتایج چند دقیقه دیگر می‌رسد."
+        )
+    else:
+        send_message("❌ خطا در اجرا. لطفاً دوباره تلاش کن.")
+
+    return True
 
 
 def main():
@@ -100,6 +148,8 @@ def main():
     updates = get_updates(offset)
 
     new_offset = offset
+    schedule_changed = False
+
     for update in updates:
         new_offset = update["update_id"] + 1
 
@@ -107,35 +157,18 @@ def main():
         text = msg.get("text", "").strip()
         chat_id = str(msg.get("chat", {}).get("id", ""))
 
-        if chat_id != CHAT_ID:
+        if chat_id != CHAT_ID or not text.startswith("/"):
             continue
 
-        if not text.startswith("/"):
-            continue
-
-        result = parse_command(text)
-        if result is None:
-            continue
-
-        days, system = result
-        labels = {"both": "عربی + انگلیسی", "arabic": "عربی", "english": "انگلیسی"}
-
-        if trigger_workflow(days, system):
-            day_word = "روز اخیر" if days > 1 else "امروز"
-            period = f"{days} {day_word}" if days > 1 else day_word
-            send_message(
-                f"✅ شروع شد\n"
-                f"سیستم: {labels[system]}\n"
-                f"بازه: {period}\n\n"
-                f"نتایج چند دقیقه دیگر می‌رسد."
-            )
-        else:
-            send_message("❌ خطا در اجرا. لطفاً دوباره تلاش کن.")
+        old_enabled = load_schedule_enabled()
+        handle_command(text)
+        if load_schedule_enabled() != old_enabled:
+            schedule_changed = True
 
     if new_offset != offset:
         save_offset(new_offset)
 
-    print(f"Processed {len(updates)} updates, offset: {new_offset}")
+    print(f"Processed {len(updates)} updates, offset: {new_offset}, schedule_changed: {schedule_changed}")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,26 @@ on:
         required: false
 
 jobs:
+  # Job 1: read config_schedule.json and decide if scheduled run should proceed
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            ENABLED=$(python -c "import json; d=json.load(open('config_schedule.json')); print(str(d.get('enabled',True)).lower())")
+            echo "should_run=$ENABLED" >> $GITHUB_OUTPUT
+          fi
+
+  # Job 2: run the monitor (only if should_run is true)
   monitor:
+    needs: check
+    if: ${{ needs.check.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

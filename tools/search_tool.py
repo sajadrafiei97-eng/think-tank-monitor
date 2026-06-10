@@ -116,7 +116,12 @@ def tavily_search(api_key: str, sites: list, keywords: list) -> list:
     return []
 
 
-def _make_tbs(days: int = 1) -> str:
+def _make_tbs(days: int = 1, date_from: str = "", date_to: str = "") -> str:
+    if date_from and date_to:
+        s = datetime.strptime(date_from, "%Y-%m-%d")
+        e = datetime.strptime(date_to,   "%Y-%m-%d")
+        return (f"cdr:1,cd_min:{s.month}/{s.day}/{s.year},"
+                f"cd_max:{e.month}/{e.day}/{e.year}")
     if days == 1:
         t = datetime.now()
         d = f"{t.month}/{t.day}/{t.year}"
@@ -175,8 +180,9 @@ def _normalize_url(url: str) -> str:
 
 
 def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
-                   hl: str = "ar", gl: str = "eg", days: int = 1) -> list:
-    date_filter = tbs if tbs is not None else _make_tbs(days)
+                   hl: str = "ar", gl: str = "eg", days: int = 1,
+                   date_from: str = "", date_to: str = "") -> list:
+    date_filter = tbs if tbs is not None else _make_tbs(days, date_from, date_to)
     site_part = " OR ".join(f"site:{s}" for s in sites)
     allowed_domains = {s.lstrip("www.") for s in sites}
 
@@ -219,7 +225,8 @@ def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
 
 def search_all(google_api_key: str, google_cse_id: str, tavily_api_key: str,
                sites: list, keywords: list, serpapi_key: str = "",
-               hl: str = "ar", gl: str = "eg", days: int = 1) -> list:
+               hl: str = "ar", gl: str = "eg", days: int = 1,
+               date_from: str = "", date_to: str = "") -> list:
     all_results = []
     seen_urls = set()
 
@@ -244,7 +251,8 @@ def search_all(google_api_key: str, google_cse_id: str, tavily_api_key: str,
 
     if serpapi_key:
         logger.info("Running SerpAPI search...")
-        _add(serpapi_search(serpapi_key, sites, keywords, hl=hl, gl=gl, days=days))
+        _add(serpapi_search(serpapi_key, sites, keywords, hl=hl, gl=gl,
+                            days=days, date_from=date_from, date_to=date_to))
     else:
         logger.info("SerpAPI: skipped (no credentials)")
 

@@ -43,6 +43,10 @@ def main():
                         help="Number of days to look back (default: 1 = today only)")
     parser.add_argument("--no-dedup", action="store_true",
                         help="Skip seen-URL deduplication (for manual/historical runs)")
+    parser.add_argument("--date-from", default="",
+                        help="Custom start date YYYY-MM-DD (overrides --days)")
+    parser.add_argument("--date-to", default="",
+                        help="Custom end date YYYY-MM-DD")
     args = parser.parse_args()
 
     config_path = os.path.join(BASE_DIR, args.config)
@@ -97,7 +101,8 @@ def main():
     gl = search_opts.get("gl", "eg")
 
     results = search_all(google_api, google_cse, tavily_key, sites, keywords, serpapi_key,
-                         hl=hl, gl=gl, days=args.days)
+                         hl=hl, gl=gl, days=args.days,
+                         date_from=args.date_from, date_to=args.date_to)
 
     if not results:
         logger.info("No results found.")

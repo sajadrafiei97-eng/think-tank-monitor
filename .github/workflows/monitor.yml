@@ -14,6 +14,14 @@ on:
         description: 'System to run: both, arabic, english'
         default: 'both'
         required: false
+      date_from:
+        description: 'Custom start date YYYY-MM-DD (overrides days)'
+        default: ''
+        required: false
+      date_to:
+        description: 'Custom end date YYYY-MM-DD'
+        default: ''
+        required: false
 
 jobs:
   # Job 1: read config_schedule.json and decide if scheduled run should proceed
@@ -76,11 +84,23 @@ jobs:
 
       - name: Run Arabic monitor
         if: ${{ github.event_name == 'schedule' || github.event.inputs.system != 'english' }}
-        run: python tools/main.py --config config.yaml --days ${{ steps.params.outputs.days }} ${{ steps.params.outputs.extra }}
+        run: |
+          EXTRA="${{ steps.params.outputs.extra }}"
+          DF="${{ github.event.inputs.date_from }}"
+          DT="${{ github.event.inputs.date_to }}"
+          DATES=""
+          [ -n "$DF" ] && DATES="--date-from $DF --date-to $DT"
+          python tools/main.py --config config.yaml --days ${{ steps.params.outputs.days }} $EXTRA $DATES
 
       - name: Run English monitor
         if: ${{ github.event_name == 'schedule' || github.event.inputs.system != 'arabic' }}
-        run: python tools/main.py --config config_en.yaml --days ${{ steps.params.outputs.days }} ${{ steps.params.outputs.extra }}
+        run: |
+          EXTRA="${{ steps.params.outputs.extra }}"
+          DF="${{ github.event.inputs.date_from }}"
+          DT="${{ github.event.inputs.date_to }}"
+          DATES=""
+          [ -n "$DF" ] && DATES="--date-from $DF --date-to $DT"
+          python tools/main.py --config config_en.yaml --days ${{ steps.params.outputs.days }} $EXTRA $DATES
 
       - name: Save state back to repo
         run: |

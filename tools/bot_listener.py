@@ -1,37 +1,85 @@
 import json
 import os
+import re
 import requests
 
-TOKEN    = os.environ["TELEGRAM_BOT_TOKEN"]
-CHAT_ID  = str(os.environ["TELEGRAM_CHAT_ID"])
 GH_TOKEN = os.environ["GH_TOKEN"]
 REPO     = "sajadrafiei97-eng/think-tank-monitor"
-OFFSET_FILE   = ".tmp/bot_offset.json"
 SCHEDULE_FILE = "config_schedule.json"
 
+# ── bot definitions ────────────────────────────────────────────────────────────
+BOTS = {
+    "arabic": {
+        "token":     os.environ["TELEGRAM_BOT_TOKEN"],
+        "chat_id":   str(os.environ["TELEGRAM_CHAT_ID"]),
+        "offset_file": ".tmp/bot_offset_ar.json",
+        "systems":   ["عربی", "هر دو"],          # options this bot can trigger
+        "system_map": {"عربی": "arabic", "هر دو": "both"},
+    },
+    "english": {
+        "token":     os.environ["TELEGRAM_BOT_TOKEN_EN"],
+        "chat_id":   str(os.environ["TELEGRAM_CHAT_ID_EN"]),
+        "offset_file": ".tmp/bot_offset_en.json",
+        "systems":   ["انگلیسی", "هر دو"],
+        "system_map": {"انگلیسی": "english", "هر دو": "both"},
+    },
+}
+
+# Time range buttons → days
+RANGE_MAP = {
+    "امروز": 1,
+    "۳ روز": 3,
+    "هفته":  7,
+}
+
+# Pattern: "YYYY-MM-DD to YYYY-MM-DD [arabic|english|both]" (free text)
+DATE_RE = re.compile(
+    r"(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})"
+    r"(?:\s+(arabic|english|both))?",
+    re.IGNORECASE,
+)
+
 HELP_TEXT = (
-    "دستورات موجود:\n\n"
-    "/run — هر دو سیستم، امروز\n"
-    "/run 3 — هر دو سیستم، ۳ روز اخیر\n"
-    "/run_ar 7 — فقط عربی، ۷ روز اخیر\n"
-    "/run_en 5 — فقط انگلیسی، ۵ روز اخیر\n"
-    "/schedule on — روشن کردن ارسال خودکار ۹ صبح\n"
-    "/schedule off — خاموش کردن ارسال خودکار ۹ صبح\n"
-    "/status — وضعیت فعلی\n"
-    "/help — این راهنما"
+    "راهنمای استفاده:\n\n"
+    "یکی از دکمه‌های کیبورد را بزن تا جستجو شروع شود.\n\n"
+    "📅 تاریخ دلخواه:\n"
+    "بعد از زدن این دکمه، بازه را تایپ کن:\n"
+    "  YYYY-MM-DD to YYYY-MM-DD\n"
+    "  YYYY-MM-DD to YYYY-MM-DD arabic\n"
+    "  YYYY-MM-DD to YYYY-MM-DD english\n"
+    "(بدون ذکر سیستم = هر دو)\n\n"
+    "دستورات:\n"
+    "  /schedule on  — روشن کردن ارسال خودکار ۹ صبح\n"
+    "  /schedule off — خاموش کردن ارسال خودکار ۹ صبح\n"
+    "  /status       — وضعیت فعلی"
 )
 
 
-def load_offset() -> int:
-    if os.path.exists(OFFSET_FILE):
-        with open(OFFSET_FILE) as f:
+def make_keyboard(bot_key: str) -> dict:
+    """Build the ReplyKeyboard for a given bot (arabic/english)."""
+    bot = BOTS[bot_key]
+    rows = []
+    for sys_label in bot["systems"]:
+        row = [{"text": f"{sys_label} - {rng}"} for rng in RANGE_MAP]
+        rows.append(row)
+    rows.append([
+        {"text": "📅 تاریخ دلخواه"},
+        {"text": "📊 وضعیت"},
+        {"text": "❓ راهنما"},
+    ])
+    return {"keyboard": rows, "resize_keyboard": True, "persistent": True}
+
+
+def load_offset(path: str) -> int:
+    if os.path.exists(path):
+        with open(path) as f:
             return json.load(f).get("offset", 0)
     return 0
 
 
-def save_offset(offset: int):
+def save_offset(path: str, offset: int):
     os.makedirs(".tmp", exist_ok=True)
-    with open(OFFSET_FILE, "w") as f:
+    with open(path, "w") as f:
         json.dump({"offset": offset}, f)
 
 
@@ -47,9 +95,9 @@ def save_schedule_enabled(enabled: bool):
         json.dump({"enabled": enabled}, f, indent=2)
 
 
-def get_updates(offset: int) -> list:
+def get_updates(token: str, offset: int) -> list:
     r = requests.get(
-        f"https://api.telegram.org/bot{TOKEN}/getUpdates",
+        f"https://api.telegram.org/bot{token}/getUpdates",
         params={"offset": offset, "timeout": 0, "limit": 20},
         timeout=15,
     )
@@ -57,118 +105,132 @@ def get_updates(offset: int) -> list:
     return r.json().get("result", [])
 
 
-def send_message(text: str):
+def send(token: str, chat_id: str, text: str, reply_markup=None):
+    payload = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={"chat_id": CHAT_ID, "text": text},
-        timeout=10,
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json=payload, timeout=10,
     )
 
 
-def trigger_workflow(days: int, system: str) -> bool:
+def trigger(system: str, days: int = 1,
+            date_from: str = "", date_to: str = "") -> bool:
     headers = {
         "Authorization": f"token {GH_TOKEN}",
         "Accept": "application/vnd.github.v3+json",
     }
+    inputs = {"days": str(days), "system": system}
+    if date_from:
+        inputs["date_from"] = date_from
+    if date_to:
+        inputs["date_to"] = date_to
     r = requests.post(
         f"https://api.github.com/repos/{REPO}/actions/workflows/monitor.yml/dispatches",
         headers=headers,
-        json={"ref": "main", "inputs": {"days": str(days), "system": system}},
+        json={"ref": "main", "inputs": inputs},
         timeout=15,
     )
     return r.status_code == 204
 
 
-def handle_command(text: str) -> bool:
-    """Process one command. Returns True if offset file should be saved."""
-    parts = text.strip().split()
-    if not parts:
-        return False
+def run_and_confirm(token: str, chat_id: str, system: str,
+                    days: int = 1, date_from: str = "", date_to: str = ""):
+    labels = {"both": "عربی + انگلیسی", "arabic": "عربی", "english": "انگلیسی"}
+    period = (f"{date_from} تا {date_to}" if date_from
+              else ("امروز" if days == 1 else f"{days} روز اخیر"))
+    if trigger(system, days, date_from, date_to):
+        send(token, chat_id,
+             f"✅ شروع شد\nسیستم: {labels.get(system, system)}\nبازه: {period}\n\n"
+             f"نتایج چند دقیقه دیگر می‌رسد.")
+    else:
+        send(token, chat_id, "❌ خطا در اجرا. لطفاً دوباره تلاش کن.")
 
-    cmd = parts[0].lower()
 
-    # Help / start
-    if cmd in ("/help", "/start"):
-        send_message(HELP_TEXT)
-        return True
+def handle(token: str, chat_id: str, text: str, bot_key: str):
+    bot   = BOTS[bot_key]
+    kbmap = bot["system_map"]   # e.g. {"عربی": "arabic", "هر دو": "both"}
 
-    # Status
-    if cmd == "/status":
-        enabled = load_schedule_enabled()
-        state = "روشن ✅" if enabled else "خاموش ⛔"
-        send_message(f"وضعیت ارسال خودکار ۹ صبح: {state}")
-        return True
+    # 1. Keyboard button: "عربی - ۳ روز" or "هر دو - امروز" etc.
+    for sys_label, days_label in [(s, d) for s in kbmap for d in RANGE_MAP]:
+        if text == f"{sys_label} - {days_label}":
+            run_and_confirm(token, chat_id, kbmap[sys_label], RANGE_MAP[days_label])
+            return
 
-    # Schedule toggle
-    if cmd == "/schedule":
+    # 2. Custom date range typed as free text
+    m = DATE_RE.fullmatch(text.strip())
+    if m:
+        date_from, date_to = m.group(1), m.group(2)
+        system = (m.group(3) or "both").lower()
+        # restrict system to what this bot is allowed to trigger
+        allowed = set(kbmap.values())
+        if system not in allowed:
+            system = next(iter(allowed))  # fall back to first allowed
+        run_and_confirm(token, chat_id, system, date_from=date_from, date_to=date_to)
+        return
+
+    # 3. Date help button
+    if text == "📅 تاریخ دلخواه":
+        send(token, chat_id,
+             "📅 بازه تاریخ را وارد کن:\n\n"
+             "فرمت:  YYYY-MM-DD to YYYY-MM-DD [system]\n\n"
+             "مثال‌ها:\n"
+             "2026-06-01 to 2026-06-07\n"
+             "2026-06-01 to 2026-06-07 arabic\n"
+             "2026-06-01 to 2026-06-07 english")
+        return
+
+    # 4. Status
+    if text in ("📊 وضعیت", "/status"):
+        state = "روشن ✅" if load_schedule_enabled() else "خاموش ⛔"
+        send(token, chat_id, f"وضعیت ارسال خودکار ۹ صبح: {state}")
+        return
+
+    # 5. Help / start
+    if text in ("❓ راهنما", "/help", "/start"):
+        send(token, chat_id, HELP_TEXT, reply_markup=make_keyboard(bot_key))
+        return
+
+    # 6. Schedule toggle
+    if text.lower().startswith("/schedule"):
+        parts = text.split()
         if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
-            send_message("استفاده صحیح:\n/schedule on\n/schedule off")
-            return True
+            send(token, chat_id, "استفاده:\n/schedule on\n/schedule off")
+            return
         enabled = parts[1].lower() == "on"
         save_schedule_enabled(enabled)
         state = "روشن ✅" if enabled else "خاموش ⛔"
-        send_message(f"ارسال خودکار ۹ صبح {state} شد.\n(تغییر چند ثانیه دیگر در گیت ذخیره می‌شود)")
-        return True
-
-    # Run commands
-    if cmd == "/run":
-        system = "both"
-    elif cmd == "/run_ar":
-        system = "arabic"
-    elif cmd == "/run_en":
-        system = "english"
-    else:
-        return False
-
-    days = 1
-    if len(parts) >= 2:
-        try:
-            days = max(1, min(int(parts[1]), 30))
-        except ValueError:
-            send_message(f"عدد نامعتبر: {parts[1]}\nمثال: /run 7")
-            return True
-
-    labels = {"both": "عربی + انگلیسی", "arabic": "عربی", "english": "انگلیسی"}
-    if trigger_workflow(days, system):
-        period = f"{days} روز اخیر" if days > 1 else "امروز"
-        send_message(
-            f"✅ شروع شد\n"
-            f"سیستم: {labels[system]}\n"
-            f"بازه: {period}\n\n"
-            f"نتایج چند دقیقه دیگر می‌رسد."
-        )
-    else:
-        send_message("❌ خطا در اجرا. لطفاً دوباره تلاش کن.")
-
-    return True
+        send(token, chat_id, f"ارسال خودکار ۹ صبح {state} شد.")
+        return
 
 
-def main():
-    offset = load_offset()
-    updates = get_updates(offset)
-
+def process_bot(bot_key: str):
+    bot = BOTS[bot_key]
+    offset = load_offset(bot["offset_file"])
+    updates = get_updates(bot["token"], offset)
     new_offset = offset
-    schedule_changed = False
 
     for update in updates:
         new_offset = update["update_id"] + 1
-
         msg = update.get("message", {})
         text = msg.get("text", "").strip()
         chat_id = str(msg.get("chat", {}).get("id", ""))
 
-        if chat_id != CHAT_ID or not text.startswith("/"):
+        if chat_id != bot["chat_id"] or not text:
             continue
 
-        old_enabled = load_schedule_enabled()
-        handle_command(text)
-        if load_schedule_enabled() != old_enabled:
-            schedule_changed = True
+        handle(bot["token"], bot["chat_id"], text, bot_key)
 
     if new_offset != offset:
-        save_offset(new_offset)
+        save_offset(bot["offset_file"], new_offset)
 
-    print(f"Processed {len(updates)} updates, offset: {new_offset}, schedule_changed: {schedule_changed}")
+    print(f"[{bot_key}] {len(updates)} updates, offset → {new_offset}")
+
+
+def main():
+    process_bot("arabic")
+    process_bot("english")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,16 @@ on:
   schedule:
     # 9:00 AM Tehran (IRDT = UTC+4:30) → 04:30 UTC
     - cron: '30 4 * * *'
-  workflow_dispatch:  # allow manual run from GitHub
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to look back (1-30)'
+        default: '1'
+        required: false
+      system:
+        description: 'System to run: both, arabic, english'
+        default: 'both'
+        required: false
 
 jobs:
   monitor:
@@ -13,16 +22,13 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
       - name: Create .env from secrets
         run: |
@@ -38,16 +44,28 @@ jobs:
       - name: Create .tmp directory
         run: mkdir -p .tmp
 
+      - name: Set run parameters
+        id: params
+        run: |
+          DAYS="${{ github.event.inputs.days }}"
+          echo "days=${DAYS:-1}" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "extra=--no-dedup" >> $GITHUB_OUTPUT
+          else
+            echo "extra=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run Arabic monitor
-        run: python tools/main.py --config config.yaml
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.system != 'english' }}
+        run: python tools/main.py --config config.yaml --days ${{ steps.params.outputs.days }} ${{ steps.params.outputs.extra }}
 
       - name: Run English monitor
-        run: python tools/main.py --config config_en.yaml
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.system != 'arabic' }}
+        run: python tools/main.py --config config_en.yaml --days ${{ steps.params.outputs.days }} ${{ steps.params.outputs.extra }}
 
       - name: Save state back to repo
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git add .tmp/seen_urls.json .tmp/seen_urls_en.json
-          git diff --staged --quiet || git commit -m "chore: update seen URLs [skip ci]"
-          git push
+          git diff --staged --quiet || (git commit -m "chore: update seen URLs [skip ci]" && git pull --rebase && git push)

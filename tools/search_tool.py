@@ -116,10 +116,12 @@ def tavily_search(api_key: str, sites: list, keywords: list) -> list:
     return []
 
 
-def _today_tbs() -> str:
-    t = datetime.now()
-    d = f"{t.month}/{t.day}/{t.year}"
-    return f"cdr:1,cd_min:{d},cd_max:{d}"
+def _make_tbs(days: int = 1) -> str:
+    if days == 1:
+        t = datetime.now()
+        d = f"{t.month}/{t.day}/{t.year}"
+        return f"cdr:1,cd_min:{d},cd_max:{d}"
+    return f"qdr:d{days}"
 
 
 def _serpapi_call(api_key: str, query: str, tbs: str, hl: str = "ar", gl: str = "eg") -> list:
@@ -173,8 +175,8 @@ def _normalize_url(url: str) -> str:
 
 
 def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
-                   hl: str = "ar", gl: str = "eg") -> list:
-    date_filter = tbs if tbs is not None else _today_tbs()
+                   hl: str = "ar", gl: str = "eg", days: int = 1) -> list:
+    date_filter = tbs if tbs is not None else _make_tbs(days)
     site_part = " OR ".join(f"site:{s}" for s in sites)
     allowed_domains = {s.lstrip("www.") for s in sites}
 
@@ -217,7 +219,7 @@ def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
 
 def search_all(google_api_key: str, google_cse_id: str, tavily_api_key: str,
                sites: list, keywords: list, serpapi_key: str = "",
-               hl: str = "ar", gl: str = "eg") -> list:
+               hl: str = "ar", gl: str = "eg", days: int = 1) -> list:
     all_results = []
     seen_urls = set()
 
@@ -242,7 +244,7 @@ def search_all(google_api_key: str, google_cse_id: str, tavily_api_key: str,
 
     if serpapi_key:
         logger.info("Running SerpAPI search...")
-        _add(serpapi_search(serpapi_key, sites, keywords, hl=hl, gl=gl))
+        _add(serpapi_search(serpapi_key, sites, keywords, hl=hl, gl=gl, days=days))
     else:
         logger.info("SerpAPI: skipped (no credentials)")
 

@@ -39,6 +39,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config.yaml",
                         help="Config file name (relative to project root)")
+    parser.add_argument("--days", type=int, default=1,
+                        help="Number of days to look back (default: 1 = today only)")
+    parser.add_argument("--no-dedup", action="store_true",
+                        help="Skip seen-URL deduplication (for manual/historical runs)")
     args = parser.parse_args()
 
     config_path = os.path.join(BASE_DIR, args.config)
@@ -92,17 +96,22 @@ def main():
     hl = search_opts.get("hl", "ar")
     gl = search_opts.get("gl", "eg")
 
-    results = search_all(google_api, google_cse, tavily_key, sites, keywords, serpapi_key, hl=hl, gl=gl)
+    results = search_all(google_api, google_cse, tavily_key, sites, keywords, serpapi_key,
+                         hl=hl, gl=gl, days=args.days)
 
     if not results:
         logger.info("No results found.")
         sys.exit(0)
 
-    new_results = filter_new_reports(results, seen)
-    logger.info(f"{len(new_results)} new (of {len(results)} total)")
+    if args.no_dedup:
+        new_results = results
+        logger.info(f"{len(new_results)} results (dedup skipped)")
+    else:
+        new_results = filter_new_reports(results, seen)
+        logger.info(f"{len(new_results)} new (of {len(results)} total)")
 
     if not new_results:
-        logger.info("All results already seen. Nothing to send.")
+        logger.info("Nothing to send.")
         sys.exit(0)
 
     for r in new_results:
@@ -110,7 +119,8 @@ def main():
 
     def _mark_sent_now(urls):
         nonlocal seen
-        seen = mark_sent(urls, seen, seen_path)
+        if not args.no_dedup:
+            seen = mark_sent(urls, seen, seen_path)
 
     sent = send_batch(bot_token, chat_id, new_results, _mark_sent_now)
     logger.info(f"\nDone. {len(sent)} report(s) sent to Telegram.")

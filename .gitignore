@@ -3,5 +3,7 @@ credentials.json
 token.json
 .tmp/run.log
 .tmp/run_en.log
+.tmp/set_secrets.py
+.tmp/add_gh_token.py
 __pycache__/
 *.pyc

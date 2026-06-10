@@ -225,7 +225,7 @@ def process_bot(bot_key: str):
     if new_offset != offset:
         save_offset(bot["offset_file"], new_offset)
 
-    print(f"[{bot_key}] {len(updates)} updates, offset → {new_offset}")
+    print(f"[{bot_key}] {len(updates)} updates, offset -> {new_offset}")
 
 
 def main():

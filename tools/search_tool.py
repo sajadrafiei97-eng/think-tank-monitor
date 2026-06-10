@@ -12,7 +12,7 @@ TAVILY_URL = "https://api.tavily.com/search"
 SERPAPI_URL = "https://serpapi.com/search"
 
 
-_NON_CONTENT_EXTS = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.zip', '.rar'}
+_NON_CONTENT_EXTS = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.zip', '.rar'}
 _INDEX_PAGE_RE = re.compile(r'/(index|default)\.(aspx?|html?|php)$', re.IGNORECASE)
 
 

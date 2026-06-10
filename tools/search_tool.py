@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -9,6 +10,20 @@ logger = logging.getLogger(__name__)
 GOOGLE_CSE_URL = "https://www.googleapis.com/customsearch/v1"
 TAVILY_URL = "https://api.tavily.com/search"
 SERPAPI_URL = "https://serpapi.com/search"
+
+
+_NON_CONTENT_EXTS = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.zip', '.rar'}
+_INDEX_PAGE_RE = re.compile(r'/(index|default)\.(aspx?|html?|php)$', re.IGNORECASE)
+
+
+def _is_report_url(url: str) -> bool:
+    """Return False for file downloads and generic listing/index pages."""
+    path = urlparse(url).path.lower()
+    if any(path.endswith(ext) for ext in _NON_CONTENT_EXTS):
+        return False
+    if _INDEX_PAGE_RE.search(path):
+        return False
+    return True
 
 
 def _domain(url: str) -> str:
@@ -201,12 +216,16 @@ def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
                 skipped += 1
                 logger.debug(f"Filtered out non-allowed domain: {_domain(url)}")
                 continue
+            if not _is_report_url(url):
+                skipped += 1
+                logger.debug(f"Filtered out non-report URL: {url}")
+                continue
             norm = _normalize_url(url)
             if norm not in seen_normalized:
                 seen_normalized.add(norm)
                 results.append(r)
         if skipped:
-            logger.info(f"  Filtered {skipped} result(s) from non-listed domains")
+            logger.info(f"  Filtered {skipped} result(s) (domain/pdf/index)")
 
     # Pass 1: intitle search (2 keyword batches)
     mid = len(keywords) // 2
@@ -237,7 +256,7 @@ def search_all(google_api_key: str, google_cse_id: str, tavily_api_key: str,
     def _add(items):
         for r in items:
             url = r.get("url", "")
-            if url and url not in seen_urls:
+            if url and url not in seen_urls and _is_report_url(url):
                 seen_urls.add(url)
                 all_results.append(r)
 

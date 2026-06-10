@@ -1,3 +1,5 @@
+language_label: "انگلیسی"
+
 credentials:
   telegram_token_env: TELEGRAM_BOT_TOKEN_EN
   telegram_chat_env: TELEGRAM_CHAT_ID_EN

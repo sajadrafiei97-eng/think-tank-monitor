@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import yaml
 from dotenv import load_dotenv
 
-from notifier import send_batch
+from notifier import send_batch, send_message
 from search_tool import search_all
 from state import filter_new_reports, load_seen_urls, mark_sent
 
@@ -96,6 +96,12 @@ def main():
     seen = load_seen_urls(seen_path)
     logger.info(f"Loaded {len(seen)} seen URLs  [{args.config}]")
 
+    # Notify start only for scheduled runs (workflow_dispatch already sends "شروع شد" via bot_listener)
+    if not args.no_dedup:
+        lang = config.get("language_label", "")
+        label = f" ({lang})" if lang else ""
+        send_message(bot_token, chat_id, f"⏳ جستجوی روزانه{label} آغاز شد...")
+
     search_opts = config.get("search_options", {})
     hl = search_opts.get("hl", "ar")
     gl = search_opts.get("gl", "eg")
@@ -117,6 +123,7 @@ def main():
 
     if not new_results:
         logger.info("Nothing to send.")
+        send_message(bot_token, chat_id, "🔍 جستجو کامل شد — محتوای جدیدی یافت نشد.")
         sys.exit(0)
 
     for r in new_results:

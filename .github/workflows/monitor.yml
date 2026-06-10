@@ -71,11 +71,32 @@ jobs:
       - name: Create .tmp directory
         run: mkdir -p .tmp
 
-      - name: Set run parameters
+      - name: Validate and set run parameters
         id: params
+        env:
+          INPUT_DAYS: ${{ github.event.inputs.days }}
+          INPUT_DATE_FROM: ${{ github.event.inputs.date_from }}
+          INPUT_DATE_TO: ${{ github.event.inputs.date_to }}
         run: |
-          DAYS="${{ github.event.inputs.days }}"
-          echo "days=${DAYS:-1}" >> $GITHUB_OUTPUT
+          # Validate days: must be a positive integer 1-30
+          if [[ "$INPUT_DAYS" =~ ^[0-9]+$ ]] && [ "$INPUT_DAYS" -ge 1 ] && [ "$INPUT_DAYS" -le 30 ]; then
+            DAYS="$INPUT_DAYS"
+          else
+            DAYS="1"
+          fi
+          echo "days=$DAYS" >> $GITHUB_OUTPUT
+
+          # Validate date_from and date_to: must match YYYY-MM-DD exactly
+          DATE_FROM=""
+          DATE_TO=""
+          if [[ "$INPUT_DATE_FROM" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && \
+             [[ "$INPUT_DATE_TO"   =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            DATE_FROM="$INPUT_DATE_FROM"
+            DATE_TO="$INPUT_DATE_TO"
+          fi
+          echo "date_from=$DATE_FROM" >> $GITHUB_OUTPUT
+          echo "date_to=$DATE_TO"     >> $GITHUB_OUTPUT
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "extra=--no-dedup" >> $GITHUB_OUTPUT
           else
@@ -84,23 +105,27 @@ jobs:
 
       - name: Run Arabic monitor
         if: ${{ github.event_name == 'schedule' || github.event.inputs.system != 'english' }}
+        env:
+          DAYS: ${{ steps.params.outputs.days }}
+          DATE_FROM: ${{ steps.params.outputs.date_from }}
+          DATE_TO: ${{ steps.params.outputs.date_to }}
+          EXTRA: ${{ steps.params.outputs.extra }}
         run: |
-          EXTRA="${{ steps.params.outputs.extra }}"
-          DF="${{ github.event.inputs.date_from }}"
-          DT="${{ github.event.inputs.date_to }}"
-          DATES=""
-          [ -n "$DF" ] && DATES="--date-from $DF --date-to $DT"
-          python tools/main.py --config config.yaml --days ${{ steps.params.outputs.days }} $EXTRA $DATES
+          ARGS="--config config.yaml --days $DAYS $EXTRA"
+          [ -n "$DATE_FROM" ] && ARGS="$ARGS --date-from $DATE_FROM --date-to $DATE_TO"
+          python tools/main.py $ARGS
 
       - name: Run English monitor
         if: ${{ github.event_name == 'schedule' || github.event.inputs.system != 'arabic' }}
+        env:
+          DAYS: ${{ steps.params.outputs.days }}
+          DATE_FROM: ${{ steps.params.outputs.date_from }}
+          DATE_TO: ${{ steps.params.outputs.date_to }}
+          EXTRA: ${{ steps.params.outputs.extra }}
         run: |
-          EXTRA="${{ steps.params.outputs.extra }}"
-          DF="${{ github.event.inputs.date_from }}"
-          DT="${{ github.event.inputs.date_to }}"
-          DATES=""
-          [ -n "$DF" ] && DATES="--date-from $DF --date-to $DT"
-          python tools/main.py --config config_en.yaml --days ${{ steps.params.outputs.days }} $EXTRA $DATES
+          ARGS="--config config_en.yaml --days $DAYS $EXTRA"
+          [ -n "$DATE_FROM" ] && ARGS="$ARGS --date-from $DATE_FROM --date-to $DATE_TO"
+          python tools/main.py $ARGS
 
       - name: Save state back to repo
         run: |

@@ -118,8 +118,12 @@ def tavily_search(api_key: str, sites: list, keywords: list) -> list:
 
 def _make_tbs(days: int = 1, date_from: str = "", date_to: str = "") -> str:
     if date_from and date_to:
-        s = datetime.strptime(date_from, "%Y-%m-%d")
-        e = datetime.strptime(date_to,   "%Y-%m-%d")
+        try:
+            s = datetime.strptime(date_from, "%Y-%m-%d")
+            e = datetime.strptime(date_to,   "%Y-%m-%d")
+        except ValueError as exc:
+            logger.warning(f"Invalid date range ({date_from} / {date_to}): {exc} — falling back to {days}d")
+            return _make_tbs(days)
         return (f"cdr:1,cd_min:{s.month}/{s.day}/{s.year},"
                 f"cd_max:{e.month}/{e.day}/{e.year}")
     if days == 1:

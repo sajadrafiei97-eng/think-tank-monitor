@@ -1,0 +1,65 @@
+credentials:
+  telegram_token_env: TELEGRAM_BOT_TOKEN_EN
+  telegram_chat_env: TELEGRAM_CHAT_ID_EN
+  serpapi_key_env: SERPAPI_KEY_EN
+
+search_options:
+  hl: en
+  gl: us
+
+seen_urls_file: .tmp/seen_urls_en.json
+
+think_tanks:
+  - name: "Middle East Forum"
+    url: "https://www.meforum.org"
+
+  - name: "Middle East Institute"
+    url: "https://mei.edu"
+
+  - name: "Stimson Center"
+    url: "https://www.stimson.org"
+
+  - name: "Rasanah - International Institute for Iranian Studies (EN)"
+    url: "https://rasanah-iiis.org"
+
+  - name: "ISPI - Italian Institute for International Political Studies"
+    url: "https://www.ispionline.it"
+
+  - name: "International Crisis Group"
+    url: "https://www.crisisgroup.org"
+
+  - name: "ISIS - Institute for Science and International Security"
+    url: "https://isis-online.org"
+
+  - name: "RAND Corporation"
+    url: "https://www.rand.org"
+
+  - name: "Hudson Institute"
+    url: "https://www.hudson.org"
+
+  - name: "Emirates Policy Center"
+    url: "https://epc.ae"
+
+  - name: "CSIS - Center for Strategic and International Studies"
+    url: "https://www.csis.org"
+
+  - name: "Arab Gulf States Institute"
+    url: "https://agsi.org"
+
+  - name: "The National Interest"
+    url: "https://nationalinterest.org"
+
+  - name: "New Lines Institute"
+    url: "https://newlinesinstitute.org"
+
+  - name: "Belfer Center for Science and International Affairs"
+    url: "https://www.belfercenter.org"
+
+keywords:
+  - iran
+  - iranian
+  - iranians
+  - tehran
+  - pezeshkian
+  - khamenei
+  - hormuz

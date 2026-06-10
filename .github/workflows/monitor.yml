@@ -1,0 +1,53 @@
+name: Think Tank Monitor
+
+on:
+  schedule:
+    # 9:00 AM Tehran (IRDT = UTC+4:30) → 04:30 UTC
+    - cron: '30 4 * * *'
+  workflow_dispatch:  # allow manual run from GitHub
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create .env from secrets
+        run: |
+          cat > .env << 'EOF'
+          SERPAPI_KEY=${{ secrets.SERPAPI_KEY }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          SERPAPI_KEY_EN=${{ secrets.SERPAPI_KEY_EN }}
+          TELEGRAM_BOT_TOKEN_EN=${{ secrets.TELEGRAM_BOT_TOKEN_EN }}
+          TELEGRAM_CHAT_ID_EN=${{ secrets.TELEGRAM_CHAT_ID_EN }}
+          EOF
+
+      - name: Create .tmp directory
+        run: mkdir -p .tmp
+
+      - name: Run Arabic monitor
+        run: python tools/main.py --config config.yaml
+
+      - name: Run English monitor
+        run: python tools/main.py --config config_en.yaml
+
+      - name: Save state back to repo
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add .tmp/seen_urls.json .tmp/seen_urls_en.json
+          git diff --staged --quiet || git commit -m "chore: update seen URLs [skip ci]"
+          git push

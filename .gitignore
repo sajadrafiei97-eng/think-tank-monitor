@@ -1,0 +1,7 @@
+.env
+credentials.json
+token.json
+.tmp/run.log
+.tmp/run_en.log
+__pycache__/
+*.pyc

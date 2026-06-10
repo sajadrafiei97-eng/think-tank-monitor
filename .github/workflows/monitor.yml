@@ -133,3 +133,70 @@ jobs:
           git config user.name "github-actions[bot]"
           git add .tmp/seen_urls.json .tmp/seen_urls_en.json
           git diff --staged --quiet || (git commit -m "chore: update seen URLs [skip ci]" && git pull --rebase && git push)
+
+      - name: Watchdog — restart bot listener if stopped + weekly health report
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN_EN: ${{ secrets.TELEGRAM_BOT_TOKEN_EN }}
+          TELEGRAM_CHAT_ID_EN: ${{ secrets.TELEGRAM_CHAT_ID_EN }}
+        run: |
+          python3 << 'PYEOF'
+          import os, requests
+          from datetime import datetime, timezone, timedelta
+
+          GH_TOKEN = os.environ["GH_TOKEN"]
+          REPO     = os.environ.get("GITHUB_REPOSITORY", "sajadrafiei97-eng/think-tank-monitor")
+          HEADERS  = {"Authorization": f"token {GH_TOKEN}",
+                      "Accept": "application/vnd.github.v3+json"}
+          BOTS = [
+              (os.environ["TELEGRAM_BOT_TOKEN"],    os.environ["TELEGRAM_CHAT_ID"]),
+              (os.environ["TELEGRAM_BOT_TOKEN_EN"], os.environ["TELEGRAM_CHAT_ID_EN"]),
+          ]
+
+          def tg(token, chat_id, text):
+              requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                            json={"chat_id": chat_id, "text": text}, timeout=10)
+
+          # --- Check bot_listener status ---
+          r = requests.get(
+              f"https://api.github.com/repos/{REPO}/actions/workflows/bot_listener.yml/runs",
+              headers=HEADERS, params={"per_page": 1}
+          ).json()
+          runs = r.get("workflow_runs", [])
+
+          need_restart = True
+          if runs:
+              latest   = runs[0]
+              status   = latest.get("status", "")
+              if status in ("in_progress", "queued"):
+                  need_restart = False
+              elif status == "completed":
+                  # Don't restart if it finished in the last 8 min (still in sleep window)
+                  updated = latest.get("updated_at", "")
+                  if updated:
+                      t = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                      if (datetime.now(timezone.utc) - t) < timedelta(minutes=8):
+                          need_restart = False
+
+          if need_restart:
+              requests.post(
+                  f"https://api.github.com/repos/{REPO}/actions/workflows/bot_listener.yml/dispatches",
+                  headers=HEADERS, json={"ref": "main"}
+              )
+              msg = "⚠️ ربات polling متوقف بود — خودکار restart شد."
+              for tok, cid in BOTS:
+                  tg(tok, cid, msg)
+              print(msg)
+          else:
+              print(f"Bot listener OK (status: {runs[0]['status'] if runs else 'unknown'})")
+
+          # --- Weekly health report (Sundays) ---
+          if datetime.now(timezone.utc).weekday() == 6 and not need_restart:
+              msg = "📊 گزارش هفتگی: سیستم پایش اندیشکده سالم است. ✅"
+              for tok, cid in BOTS:
+                  tg(tok, cid, msg)
+              print("Weekly health report sent.")
+          PYEOF

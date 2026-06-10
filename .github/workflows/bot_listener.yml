@@ -5,6 +5,10 @@ on:
     - cron: '*/5 * * * *'  # backup: restarts chain if it breaks
   workflow_dispatch:
 
+concurrency:
+  group: bot-listener
+  cancel-in-progress: false
+
 jobs:
   listen:
     runs-on: ubuntu-latest

@@ -152,7 +152,7 @@ def _serpapi_call(api_key: str, query: str, tbs: str, hl: str = "ar", gl: str = 
                 "api_key": api_key,
                 "engine": "google",
                 "q": query,
-                "num": 10,
+                "num": 20,
                 "tbs": tbs,
                 "hl": hl,
                 "gl": gl,

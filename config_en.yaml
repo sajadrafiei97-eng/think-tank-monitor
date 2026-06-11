@@ -1,4 +1,5 @@
 language_label: "انگلیسی"
+system_key: "english"
 
 credentials:
   telegram_token_env: TELEGRAM_BOT_TOKEN_EN
@@ -65,3 +66,12 @@ keywords:
   - pezeshkian
   - khamenei
   - hormuz
+  - axis
+  - resistance
+  - persian
+  - isfahan
+  - esfahan
+  - bushehr
+  - persia
+  - persians
+  - irani

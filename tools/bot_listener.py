@@ -42,6 +42,8 @@ DATE_RE = re.compile(
 HELP_TEXT = (
     "راهنمای استفاده:\n\n"
     "یکی از دکمه‌های کیبورد را بزن تا جستجو شروع شود.\n\n"
+    "🔎 فقط عنوان — جستجو فقط در عنوان مقالات (سریع‌تر، دقیق‌تر)\n"
+    "📄 عنوان + متن — جستجو در عنوان و متن مقالات (جامع‌تر)\n\n"
     "📅 تاریخ دلخواه:\n"
     "بعد از زدن این دکمه، بازه را تایپ کن:\n"
     "  YYYY-MM-DD to YYYY-MM-DD\n"
@@ -51,7 +53,7 @@ HELP_TEXT = (
     "دستورات:\n"
     "  /schedule on  — روشن کردن ارسال خودکار ۹ صبح\n"
     "  /schedule off — خاموش کردن ارسال خودکار ۹ صبح\n"
-    "  /status       — وضعیت فعلی"
+    "  /status       — وضعیت فعلی (شامل حالت جستجو)"
 )
 
 
@@ -62,6 +64,10 @@ def make_keyboard(bot_key: str) -> dict:
     for sys_label in bot["systems"]:
         row = [{"text": f"{sys_label} - {rng}"} for rng in RANGE_MAP]
         rows.append(row)
+    rows.append([
+        {"text": "🔎 فقط عنوان"},
+        {"text": "📄 عنوان + متن"},
+    ])
     rows.append([
         {"text": "📅 تاریخ دلخواه"},
         {"text": "📊 وضعیت"},
@@ -91,8 +97,30 @@ def load_schedule_enabled() -> bool:
 
 
 def save_schedule_enabled(enabled: bool):
+    data = {}
+    if os.path.exists(SCHEDULE_FILE):
+        with open(SCHEDULE_FILE) as f:
+            data = json.load(f)
+    data["enabled"] = enabled
     with open(SCHEDULE_FILE, "w") as f:
-        json.dump({"enabled": enabled}, f, indent=2)
+        json.dump(data, f, indent=2)
+
+
+def load_search_mode(bot_key: str) -> str:
+    if os.path.exists(SCHEDULE_FILE):
+        with open(SCHEDULE_FILE) as f:
+            return json.load(f).get(f"search_mode_{bot_key}", "full")
+    return "full"
+
+
+def save_search_mode(bot_key: str, mode: str):
+    data = {}
+    if os.path.exists(SCHEDULE_FILE):
+        with open(SCHEDULE_FILE) as f:
+            data = json.load(f)
+    data[f"search_mode_{bot_key}"] = mode
+    with open(SCHEDULE_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 
 def get_updates(token: str, offset: int) -> list:
@@ -181,18 +209,33 @@ def handle(token: str, chat_id: str, text: str, bot_key: str):
              "2026-06-01 to 2026-06-07 english")
         return
 
-    # 4. Status
-    if text in ("📊 وضعیت", "/status"):
-        state = "روشن ✅" if load_schedule_enabled() else "خاموش ⛔"
-        send(token, chat_id, f"وضعیت ارسال خودکار ۹ صبح: {state}")
+    # 4. Search mode toggle
+    if text == "🔎 فقط عنوان":
+        save_search_mode(bot_key, "title")
+        send(token, chat_id, "✅ حالت جستجو تغییر کرد: فقط عنوان مقالات بررسی می‌شود.")
         return
 
-    # 5. Help / start
+    if text == "📄 عنوان + متن":
+        save_search_mode(bot_key, "full")
+        send(token, chat_id, "✅ حالت جستجو تغییر کرد: عنوان و متن مقالات بررسی می‌شود.")
+        return
+
+    # 5. Status
+    if text in ("📊 وضعیت", "/status"):
+        state = "روشن ✅" if load_schedule_enabled() else "خاموش ⛔"
+        mode = load_search_mode(bot_key)
+        mode_label = "فقط عنوان 🔎" if mode == "title" else "عنوان + متن 📄"
+        send(token, chat_id,
+             f"وضعیت ارسال خودکار ۹ صبح: {state}\n"
+             f"حالت جستجو: {mode_label}")
+        return
+
+    # 6. Help / start
     if text in ("❓ راهنما", "/help", "/start"):
         send(token, chat_id, HELP_TEXT, reply_markup=make_keyboard(bot_key))
         return
 
-    # 6. Schedule toggle
+    # 7. Schedule toggle
     if text.lower().startswith("/schedule"):
         parts = text.split()
         if len(parts) < 2 or parts[1].lower() not in ("on", "off"):

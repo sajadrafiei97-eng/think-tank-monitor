@@ -1,3 +1,5 @@
 {
-  "enabled": true
+  "enabled": true,
+  "search_mode_arabic": "full",
+  "search_mode_english": "full"
 }

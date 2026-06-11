@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import sys
@@ -106,9 +107,21 @@ def main():
     hl = search_opts.get("hl", "ar")
     gl = search_opts.get("gl", "eg")
 
+    # Read search mode from config_schedule.json
+    system_key = config.get("system_key", "")
+    schedule_path = os.path.join(BASE_DIR, "config_schedule.json")
+    search_mode = "full"
+    if system_key and os.path.exists(schedule_path):
+        with open(schedule_path, "r") as f:
+            sched = json.load(f)
+        search_mode = sched.get(f"search_mode_{system_key}", "full")
+    title_only = (search_mode == "title")
+    logger.info(f"Search mode: {search_mode} (title_only={title_only})")
+
     results = search_all(google_api, google_cse, tavily_key, sites, keywords, serpapi_key,
                          hl=hl, gl=gl, days=args.days,
-                         date_from=args.date_from, date_to=args.date_to)
+                         date_from=args.date_from, date_to=args.date_to,
+                         title_only=title_only)
 
     if not results:
         logger.info("No results found.")

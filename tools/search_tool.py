@@ -196,7 +196,8 @@ def _normalize_url(url: str) -> str:
 
 def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
                    hl: str = "ar", gl: str = "eg", days: int = 1,
-                   date_from: str = "", date_to: str = "") -> list:
+                   date_from: str = "", date_to: str = "",
+                   title_only: bool = False) -> list:
     date_filter = tbs if tbs is not None else _make_tbs(days, date_from, date_to)
     site_part = " OR ".join(f"site:{s}" for s in sites)
     allowed_domains = {s.lstrip("www.") for s in sites}
@@ -223,7 +224,7 @@ def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
         if skipped:
             logger.info(f"  Filtered {skipped} result(s) (domain/pdf/index)")
 
-    # Pass 1: intitle search (2 keyword batches)
+    # Pass 1: intitle search (2 keyword batches) — always runs
     mid = len(keywords) // 2
     for batch in [keywords[:mid], keywords[mid:]]:
         kw_part = " OR ".join(f'intitle:"{k}"' for k in batch)
@@ -232,20 +233,22 @@ def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
 
     logger.info(f"Pass 1 (intitle): {len(results)} results")
 
-    # Pass 2: body search — catches sites not well-covered by intitle
-    body_kws = [k for k in keywords if " " in k] or keywords[:6]
-    kw_body = " OR ".join(f'"{k}"' for k in body_kws)
-    query_body = f"({site_part}) ({kw_body})"
-    _add_filtered(_serpapi_call(api_key, query_body, date_filter, hl, gl))
+    if not title_only:
+        # Pass 2: body search — catches articles where keyword appears in text not title
+        body_kws = [k for k in keywords if " " in k] or keywords[:6]
+        kw_body = " OR ".join(f'"{k}"' for k in body_kws)
+        query_body = f"({site_part}) ({kw_body})"
+        _add_filtered(_serpapi_call(api_key, query_body, date_filter, hl, gl))
+        logger.info(f"Pass 1+2 total: {len(results)} results")
 
-    logger.info(f"Pass 1+2 total: {len(results)} results")
     return results
 
 
 def search_all(google_api_key: str, google_cse_id: str, tavily_api_key: str,
                sites: list, keywords: list, serpapi_key: str = "",
                hl: str = "ar", gl: str = "eg", days: int = 1,
-               date_from: str = "", date_to: str = "") -> list:
+               date_from: str = "", date_to: str = "",
+               title_only: bool = False) -> list:
     all_results = []
     seen_urls = set()
 
@@ -262,16 +265,19 @@ def search_all(google_api_key: str, google_cse_id: str, tavily_api_key: str,
     else:
         logger.info("Google CSE: skipped (no credentials)")
 
-    if tavily_api_key:
+    if tavily_api_key and not title_only:
         logger.info("Running Tavily search...")
         _add(tavily_search(tavily_api_key, sites, keywords))
+    elif tavily_api_key:
+        logger.info("Tavily: skipped (title-only mode)")
     else:
         logger.info("Tavily: skipped (no credentials)")
 
     if serpapi_key:
-        logger.info("Running SerpAPI search...")
+        logger.info(f"Running SerpAPI search (title_only={title_only})...")
         _add(serpapi_search(serpapi_key, sites, keywords, hl=hl, gl=gl,
-                            days=days, date_from=date_from, date_to=date_to))
+                            days=days, date_from=date_from, date_to=date_to,
+                            title_only=title_only))
     else:
         logger.info("SerpAPI: skipped (no credentials)")
 

@@ -112,6 +112,7 @@ def main():
 
     if not results:
         logger.info("No results found.")
+        send_message(bot_token, chat_id, "🔍 جستجو کامل شد — محتوای جدیدی یافت نشد.")
         sys.exit(0)
 
     if args.no_dedup:

@@ -141,10 +141,6 @@ def _make_tbs(days: int = 1, date_from: str = "", date_to: str = "") -> str:
             return _make_tbs(days)
         return (f"cdr:1,cd_min:{s.month}/{s.day}/{s.year},"
                 f"cd_max:{e.month}/{e.day}/{e.year}")
-    if days == 1:
-        t = datetime.now()
-        d = f"{t.month}/{t.day}/{t.year}"
-        return f"cdr:1,cd_min:{d},cd_max:{d}"
     return f"qdr:d{days}"
 
 

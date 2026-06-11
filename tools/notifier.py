@@ -12,35 +12,6 @@ def _escape_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def send_notification(bot_token: str, chat_id: str, report: dict, think_tank_name: str) -> bool:
-    title = _escape_html(report.get("title", "").strip())
-    url = report.get("url", "").strip()
-    source = _escape_html(think_tank_name)
-
-    message = f"📌 <b>{source}</b>\n{title}\n{url}"
-
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False,
-    }
-
-    try:
-        resp = requests.post(
-            TELEGRAM_API.format(token=bot_token),
-            json=payload,
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return True
-        else:
-            logger.error(f"Telegram error {resp.status_code}: {resp.text[:200]}")
-            return False
-    except requests.RequestException as e:
-        logger.error(f"Telegram request failed: {e}")
-        return False
-
 
 def send_message(bot_token: str, chat_id: str, text: str) -> bool:
     try:

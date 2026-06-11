@@ -163,27 +163,30 @@ def trigger(system: str, days: int = 1,
     return r.status_code == 204
 
 
-def run_and_confirm(token: str, chat_id: str, system: str,
+def run_and_confirm(token: str, chat_id: str, system: str, bot_key: str,
                     days: int = 1, date_from: str = "", date_to: str = ""):
     labels = {"both": "عربی + انگلیسی", "arabic": "عربی", "english": "انگلیسی"}
     period = (f"{date_from} تا {date_to}" if date_from
               else ("امروز" if days == 1 else f"{days} روز اخیر"))
+    kb = make_keyboard(bot_key)
     if trigger(system, days, date_from, date_to):
         send(token, chat_id,
              f"✅ شروع شد\nسیستم: {labels.get(system, system)}\nبازه: {period}\n\n"
-             f"نتایج چند دقیقه دیگر می‌رسد.")
+             f"نتایج چند دقیقه دیگر می‌رسد.",
+             reply_markup=kb)
     else:
-        send(token, chat_id, "❌ خطا در اجرا. لطفاً دوباره تلاش کن.")
+        send(token, chat_id, "❌ خطا در اجرا. لطفاً دوباره تلاش کن.", reply_markup=kb)
 
 
 def handle(token: str, chat_id: str, text: str, bot_key: str):
     bot   = BOTS[bot_key]
     kbmap = bot["system_map"]   # e.g. {"عربی": "arabic", "هر دو": "both"}
+    kb    = make_keyboard(bot_key)
 
     # 1. Keyboard button: "عربی - ۳ روز" or "هر دو - امروز" etc.
     for sys_label, days_label in [(s, d) for s in kbmap for d in RANGE_MAP]:
         if text == f"{sys_label} - {days_label}":
-            run_and_confirm(token, chat_id, kbmap[sys_label], RANGE_MAP[days_label])
+            run_and_confirm(token, chat_id, kbmap[sys_label], bot_key, RANGE_MAP[days_label])
             return
 
     # 2. Custom date range typed as free text
@@ -195,7 +198,7 @@ def handle(token: str, chat_id: str, text: str, bot_key: str):
         allowed = set(kbmap.values())
         if system not in allowed:
             system = next(iter(allowed))  # fall back to first allowed
-        run_and_confirm(token, chat_id, system, date_from=date_from, date_to=date_to)
+        run_and_confirm(token, chat_id, system, bot_key, date_from=date_from, date_to=date_to)
         return
 
     # 3. Date help button
@@ -206,18 +209,19 @@ def handle(token: str, chat_id: str, text: str, bot_key: str):
              "مثال‌ها:\n"
              "2026-06-01 to 2026-06-07\n"
              "2026-06-01 to 2026-06-07 arabic\n"
-             "2026-06-01 to 2026-06-07 english")
+             "2026-06-01 to 2026-06-07 english",
+             reply_markup=kb)
         return
 
     # 4. Search mode toggle
     if text == "🔎 فقط عنوان":
         save_search_mode(bot_key, "title")
-        send(token, chat_id, "✅ حالت جستجو تغییر کرد: فقط عنوان مقالات بررسی می‌شود.")
+        send(token, chat_id, "✅ حالت جستجو: فقط عنوان 🔎", reply_markup=kb)
         return
 
     if text == "📄 عنوان + متن":
         save_search_mode(bot_key, "full")
-        send(token, chat_id, "✅ حالت جستجو تغییر کرد: عنوان و متن مقالات بررسی می‌شود.")
+        send(token, chat_id, "✅ حالت جستجو: عنوان + متن 📄", reply_markup=kb)
         return
 
     # 5. Status
@@ -227,24 +231,25 @@ def handle(token: str, chat_id: str, text: str, bot_key: str):
         mode_label = "فقط عنوان 🔎" if mode == "title" else "عنوان + متن 📄"
         send(token, chat_id,
              f"وضعیت ارسال خودکار ۹ صبح: {state}\n"
-             f"حالت جستجو: {mode_label}")
+             f"حالت جستجو: {mode_label}",
+             reply_markup=kb)
         return
 
     # 6. Help / start
     if text in ("❓ راهنما", "/help", "/start"):
-        send(token, chat_id, HELP_TEXT, reply_markup=make_keyboard(bot_key))
+        send(token, chat_id, HELP_TEXT, reply_markup=kb)
         return
 
     # 7. Schedule toggle
     if text.lower().startswith("/schedule"):
         parts = text.split()
         if len(parts) < 2 or parts[1].lower() not in ("on", "off"):
-            send(token, chat_id, "استفاده:\n/schedule on\n/schedule off")
+            send(token, chat_id, "استفاده:\n/schedule on\n/schedule off", reply_markup=kb)
             return
         enabled = parts[1].lower() == "on"
         save_schedule_enabled(enabled)
         state = "روشن ✅" if enabled else "خاموش ⛔"
-        send(token, chat_id, f"ارسال خودکار ۹ صبح {state} شد.")
+        send(token, chat_id, f"ارسال خودکار ۹ صبح {state} شد.", reply_markup=kb)
         return
 
 

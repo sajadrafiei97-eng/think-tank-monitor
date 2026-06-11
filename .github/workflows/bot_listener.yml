@@ -40,6 +40,66 @@ jobs:
           git add .tmp/bot_offset_ar.json .tmp/bot_offset_en.json config_schedule.json
           git diff --staged --quiet || (git commit -m "chore: update bot state [skip ci]" && git pull --rebase && git push)
 
+      - name: Daily monitor trigger — fire if cron missed today
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          SCHEDULE_FILE: config_schedule.json
+        run: |
+          python3 << 'PYEOF'
+          import os, json, requests
+          from datetime import datetime, timezone, timedelta
+
+          GH_TOKEN = os.environ["GH_TOKEN"]
+          REPO     = os.environ.get("GITHUB_REPOSITORY", "sajadrafiei97-eng/think-tank-monitor")
+          HEADERS  = {"Authorization": f"token {GH_TOKEN}",
+                      "Accept": "application/vnd.github.v3+json"}
+
+          # Read schedule toggle
+          enabled = True
+          try:
+              with open("config_schedule.json") as f:
+                  enabled = json.load(f).get("enabled", True)
+          except Exception:
+              pass
+
+          if not enabled:
+              print("Daily schedule is disabled — skipping trigger check.")
+              exit(0)
+
+          now = datetime.now(timezone.utc)
+          # 9am Tehran = 04:30 UTC (IRDT=UTC+4:30)
+          trigger_utc = now.replace(hour=4, minute=30, second=0, microsecond=0)
+
+          if now < trigger_utc:
+              print(f"Not yet {trigger_utc.strftime('%H:%M')} UTC — skipping.")
+              exit(0)
+
+          # Check if monitor.yml already ran today (after 04:00 UTC to avoid edge cases)
+          window_start = now.replace(hour=4, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+          r = requests.get(
+              f"https://api.github.com/repos/{REPO}/actions/workflows/monitor.yml/runs",
+              headers=HEADERS,
+              params={"per_page": 5, "created": f">={window_start}"},
+          ).json()
+          runs = r.get("workflow_runs", [])
+
+          active = [x for x in runs if x.get("status") in ("in_progress", "queued", "completed")]
+          if active:
+              print(f"Monitor already ran today ({active[0]['status']}) — no trigger needed.")
+              exit(0)
+
+          # Trigger monitor.yml
+          resp = requests.post(
+              f"https://api.github.com/repos/{REPO}/actions/workflows/monitor.yml/dispatches",
+              headers=HEADERS,
+              json={"ref": "main"},
+          )
+          if resp.status_code == 204:
+              print("Triggered monitor.yml (daily schedule missed by cron).")
+          else:
+              print(f"Trigger failed: {resp.status_code} {resp.text}")
+          PYEOF
+
       - name: Keep-alive — trigger next run in 5 min
         if: always()
         env:

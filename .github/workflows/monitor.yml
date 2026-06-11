@@ -22,6 +22,10 @@ on:
         description: 'Custom end date YYYY-MM-DD'
         default: ''
         required: false
+      mode:
+        description: 'Search mode: title or full (overrides config_schedule.json)'
+        default: ''
+        required: false
       is_scheduled:
         description: 'true when triggered automatically as daily run (not manual)'
         default: 'false'
@@ -82,6 +86,7 @@ jobs:
           INPUT_DAYS: ${{ github.event.inputs.days }}
           INPUT_DATE_FROM: ${{ github.event.inputs.date_from }}
           INPUT_DATE_TO: ${{ github.event.inputs.date_to }}
+          INPUT_MODE: ${{ github.event.inputs.mode }}
         run: |
           # Validate days: must be a positive integer 1-30
           if [[ "$INPUT_DAYS" =~ ^[0-9]+$ ]] && [ "$INPUT_DAYS" -ge 1 ] && [ "$INPUT_DAYS" -le 30 ]; then
@@ -102,6 +107,13 @@ jobs:
           echo "date_from=$DATE_FROM" >> $GITHUB_OUTPUT
           echo "date_to=$DATE_TO"     >> $GITHUB_OUTPUT
 
+          # Validate mode: must be title or full
+          MODE=""
+          if [ "$INPUT_MODE" = "title" ] || [ "$INPUT_MODE" = "full" ]; then
+            MODE="$INPUT_MODE"
+          fi
+          echo "mode=$MODE" >> $GITHUB_OUTPUT
+
           IS_SCHEDULED="${{ github.event.inputs.is_scheduled }}"
           if [ "${{ github.event_name }}" = "schedule" ] || [ "$IS_SCHEDULED" = "true" ]; then
             echo "extra=" >> $GITHUB_OUTPUT
@@ -115,10 +127,12 @@ jobs:
           DAYS: ${{ steps.params.outputs.days }}
           DATE_FROM: ${{ steps.params.outputs.date_from }}
           DATE_TO: ${{ steps.params.outputs.date_to }}
+          MODE: ${{ steps.params.outputs.mode }}
           EXTRA: ${{ steps.params.outputs.extra }}
         run: |
           ARGS="--config config.yaml --days $DAYS $EXTRA"
           [ -n "$DATE_FROM" ] && ARGS="$ARGS --date-from $DATE_FROM --date-to $DATE_TO"
+          [ -n "$MODE" ] && ARGS="$ARGS --mode $MODE"
           python tools/main.py $ARGS
 
       - name: Run English monitor
@@ -127,10 +141,12 @@ jobs:
           DAYS: ${{ steps.params.outputs.days }}
           DATE_FROM: ${{ steps.params.outputs.date_from }}
           DATE_TO: ${{ steps.params.outputs.date_to }}
+          MODE: ${{ steps.params.outputs.mode }}
           EXTRA: ${{ steps.params.outputs.extra }}
         run: |
           ARGS="--config config_en.yaml --days $DAYS $EXTRA"
           [ -n "$DATE_FROM" ] && ARGS="$ARGS --date-from $DATE_FROM --date-to $DATE_TO"
+          [ -n "$MODE" ] && ARGS="$ARGS --mode $MODE"
           python tools/main.py $ARGS
 
       - name: Save state back to repo

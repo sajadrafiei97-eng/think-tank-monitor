@@ -48,6 +48,8 @@ def main():
                         help="Custom start date YYYY-MM-DD (overrides --days)")
     parser.add_argument("--date-to", default="",
                         help="Custom end date YYYY-MM-DD")
+    parser.add_argument("--mode", default="", choices=["", "title", "full"],
+                        help="Search mode override: title or full")
     args = parser.parse_args()
 
     config_path = os.path.join(BASE_DIR, args.config)
@@ -107,14 +109,17 @@ def main():
     hl = search_opts.get("hl", "ar")
     gl = search_opts.get("gl", "eg")
 
-    # Read search mode from config_schedule.json
-    system_key = config.get("system_key", "")
-    schedule_path = os.path.join(BASE_DIR, "config_schedule.json")
-    search_mode = "full"
-    if system_key and os.path.exists(schedule_path):
-        with open(schedule_path, "r") as f:
-            sched = json.load(f)
-        search_mode = sched.get(f"search_mode_{system_key}", "full")
+    # Determine search mode: --mode arg overrides config_schedule.json
+    if args.mode:
+        search_mode = args.mode
+    else:
+        system_key = config.get("system_key", "")
+        schedule_path = os.path.join(BASE_DIR, "config_schedule.json")
+        search_mode = "full"
+        if system_key and os.path.exists(schedule_path):
+            with open(schedule_path, "r") as f:
+                sched = json.load(f)
+            search_mode = sched.get(f"search_mode_{system_key}", "full")
     title_only = (search_mode == "title")
     logger.info(f"Search mode: {search_mode} (title_only={title_only})")
 

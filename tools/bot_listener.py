@@ -13,7 +13,7 @@ BOTS = {
         "token":     os.environ["TELEGRAM_BOT_TOKEN"],
         "chat_id":   str(os.environ["TELEGRAM_CHAT_ID"]),
         "offset_file": ".tmp/bot_offset_ar.json",
-        "systems":   ["عربی", "هر دو"],          # options this bot can trigger
+        "systems":   ["عربی", "هر دو"],
         "system_map": {"عربی": "arabic", "هر دو": "both"},
     },
     "english": {
@@ -32,33 +32,30 @@ RANGE_MAP = {
     "هفته":  7,
 }
 
-# Pattern: "YYYY-MM-DD to YYYY-MM-DD [arabic|english|both]" (free text)
+# Pattern: "YYYY-MM-DD to YYYY-MM-DD [arabic|english|both] [title|full]"
 DATE_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})"
-    r"(?:\s+(arabic|english|both))?",
+    r"(?:\s+(arabic|english|both))?"
+    r"(?:\s+(title|full))?",
     re.IGNORECASE,
 )
 
 HELP_TEXT = (
     "راهنمای استفاده:\n\n"
-    "یکی از دکمه‌های کیبورد را بزن تا جستجو شروع شود.\n\n"
-    "🔎 فقط عنوان — جستجو فقط در عنوان مقالات (سریع‌تر، دقیق‌تر)\n"
-    "📄 عنوان + متن — جستجو در عنوان و متن مقالات (جامع‌تر)\n\n"
-    "📅 تاریخ دلخواه:\n"
-    "بعد از زدن این دکمه، بازه را تایپ کن:\n"
-    "  YYYY-MM-DD to YYYY-MM-DD\n"
-    "  YYYY-MM-DD to YYYY-MM-DD arabic\n"
-    "  YYYY-MM-DD to YYYY-MM-DD english\n"
-    "(بدون ذکر سیستم = هر دو)\n\n"
+    "ابتدا حالت جستجو را انتخاب کن، سپس بازه را بزن — هر دو در همان poll بعدی پردازش می‌شوند:\n\n"
+    "  🔎 فقط عنوان — جستجو فقط در عنوان (سریع‌تر)\n"
+    "  📄 عنوان + متن — جستجو در عنوان و متن (جامع‌تر)\n\n"
+    "📅 تاریخ دلخواه با حالت:\n"
+    "  YYYY-MM-DD to YYYY-MM-DD arabic title\n"
+    "  YYYY-MM-DD to YYYY-MM-DD english full\n\n"
     "دستورات:\n"
     "  /schedule on  — روشن کردن ارسال خودکار ۹ صبح\n"
     "  /schedule off — خاموش کردن ارسال خودکار ۹ صبح\n"
-    "  /status       — وضعیت فعلی (شامل حالت جستجو)"
+    "  /status       — وضعیت فعلی"
 )
 
 
 def make_keyboard(bot_key: str) -> dict:
-    """Build the ReplyKeyboard for a given bot (arabic/english)."""
     bot = BOTS[bot_key]
     rows = []
     for sys_label in bot["systems"]:
@@ -73,7 +70,7 @@ def make_keyboard(bot_key: str) -> dict:
         {"text": "📊 وضعیت"},
         {"text": "❓ راهنما"},
     ])
-    return {"keyboard": rows, "resize_keyboard": True, "persistent": True}
+    return {"keyboard": rows, "resize_keyboard": True, "is_persistent": True}
 
 
 def load_offset(path: str) -> int:
@@ -144,7 +141,7 @@ def send(token: str, chat_id: str, text: str, reply_markup=None):
 
 
 def trigger(system: str, days: int = 1,
-            date_from: str = "", date_to: str = "") -> bool:
+            date_from: str = "", date_to: str = "", mode: str = "") -> bool:
     headers = {
         "Authorization": f"token {GH_TOKEN}",
         "Accept": "application/vnd.github.v3+json",
@@ -154,6 +151,8 @@ def trigger(system: str, days: int = 1,
         inputs["date_from"] = date_from
     if date_to:
         inputs["date_to"] = date_to
+    if mode:
+        inputs["mode"] = mode
     r = requests.post(
         f"https://api.github.com/repos/{REPO}/actions/workflows/monitor.yml/dispatches",
         headers=headers,
@@ -164,14 +163,17 @@ def trigger(system: str, days: int = 1,
 
 
 def run_and_confirm(token: str, chat_id: str, system: str, bot_key: str,
-                    days: int = 1, date_from: str = "", date_to: str = ""):
+                    days: int = 1, date_from: str = "", date_to: str = "",
+                    mode: str = ""):
     labels = {"both": "عربی + انگلیسی", "arabic": "عربی", "english": "انگلیسی"}
+    mode_icons = {"title": " 🔎", "full": " 📄"}
     period = (f"{date_from} تا {date_to}" if date_from
               else ("امروز" if days == 1 else f"{days} روز اخیر"))
     kb = make_keyboard(bot_key)
-    if trigger(system, days, date_from, date_to):
+    if trigger(system, days, date_from, date_to, mode):
         send(token, chat_id,
-             f"✅ شروع شد\nسیستم: {labels.get(system, system)}\nبازه: {period}\n\n"
+             f"✅ شروع شد\nسیستم: {labels.get(system, system)}"
+             f"\nبازه: {period}{mode_icons.get(mode, '')}\n\n"
              f"نتایج چند دقیقه دیگر می‌رسد.",
              reply_markup=kb)
     else:
@@ -180,43 +182,47 @@ def run_and_confirm(token: str, chat_id: str, system: str, bot_key: str,
 
 def handle(token: str, chat_id: str, text: str, bot_key: str):
     bot   = BOTS[bot_key]
-    kbmap = bot["system_map"]   # e.g. {"عربی": "arabic", "هر دو": "both"}
+    kbmap = bot["system_map"]
     kb    = make_keyboard(bot_key)
 
-    # 1. Keyboard button: "عربی - ۳ روز" or "هر دو - امروز" etc.
+    # 1. Search button: "عربی - امروز" etc. — reads current saved mode automatically
     for sys_label, days_label in [(s, d) for s in kbmap for d in RANGE_MAP]:
         if text == f"{sys_label} - {days_label}":
-            run_and_confirm(token, chat_id, kbmap[sys_label], bot_key, RANGE_MAP[days_label])
+            mode = load_search_mode(bot_key)   # picks up any mode set in same batch
+            run_and_confirm(token, chat_id, kbmap[sys_label], bot_key,
+                            RANGE_MAP[days_label], mode=mode)
             return
 
-    # 2. Custom date range typed as free text
+    # 2. Custom date range: "2026-06-01 to 2026-06-07 [arabic] [title]"
     m = DATE_RE.fullmatch(text.strip())
     if m:
         date_from, date_to = m.group(1), m.group(2)
         system = (m.group(3) or "both").lower()
-        # restrict system to what this bot is allowed to trigger
+        mode   = (m.group(4) or load_search_mode(bot_key)).lower()
         allowed = set(kbmap.values())
         if system not in allowed:
-            system = next(iter(allowed))  # fall back to first allowed
-        run_and_confirm(token, chat_id, system, bot_key, date_from=date_from, date_to=date_to)
+            system = next(iter(allowed))
+        run_and_confirm(token, chat_id, system, bot_key,
+                        date_from=date_from, date_to=date_to, mode=mode)
         return
 
     # 3. Date help button
     if text == "📅 تاریخ دلخواه":
         send(token, chat_id,
              "📅 بازه تاریخ را وارد کن:\n\n"
-             "فرمت:  YYYY-MM-DD to YYYY-MM-DD [system]\n\n"
+             "فرمت:  YYYY-MM-DD to YYYY-MM-DD [system] [mode]\n\n"
              "مثال‌ها:\n"
              "2026-06-01 to 2026-06-07\n"
-             "2026-06-01 to 2026-06-07 arabic\n"
-             "2026-06-01 to 2026-06-07 english",
+             "2026-06-01 to 2026-06-07 arabic title\n"
+             "2026-06-01 to 2026-06-07 english full",
              reply_markup=kb)
         return
 
-    # 4. Search mode toggle
+    # 4. Search mode toggle — saves locally so next search in same batch picks it up
     if text == "🔎 فقط عنوان":
         save_search_mode(bot_key, "title")
-        send(token, chat_id, "✅ حالت جستجو: فقط عنوان 🔎", reply_markup=kb)
+        mode_label = "فقط عنوان 🔎"
+        send(token, chat_id, f"✅ حالت جستجو: {mode_label}", reply_markup=kb)
         return
 
     if text == "📄 عنوان + متن":
@@ -231,7 +237,7 @@ def handle(token: str, chat_id: str, text: str, bot_key: str):
         mode_label = "فقط عنوان 🔎" if mode == "title" else "عنوان + متن 📄"
         send(token, chat_id,
              f"وضعیت ارسال خودکار ۹ صبح: {state}\n"
-             f"حالت جستجو: {mode_label}",
+             f"حالت جستجو پیش‌فرض: {mode_label}",
              reply_markup=kb)
         return
 

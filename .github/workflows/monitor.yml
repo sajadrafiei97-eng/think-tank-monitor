@@ -199,8 +199,8 @@ jobs:
           else:
               print(f"Bot listener OK (status: {runs[0]['status'] if runs else 'unknown'})")
 
-          # --- Weekly health report (Sundays) ---
-          if datetime.now(timezone.utc).weekday() == 6 and not need_restart:
+          # --- Weekly health report (Wednesdays) ---
+          if datetime.now(timezone.utc).weekday() == 2 and not need_restart:
               msg = "📊 گزارش هفتگی: سیستم پایش اندیشکده سالم است. ✅"
               for tok, cid in BOTS:
                   tg(tok, cid, msg)

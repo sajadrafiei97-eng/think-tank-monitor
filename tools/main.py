@@ -130,6 +130,10 @@ def main():
     for r in new_results:
         r["_source"] = _resolve_source(r["url"], domain_map)
 
+    # Sort by think-tank order so all articles from the same source arrive consecutively
+    tt_order = {tt["name"]: i for i, tt in enumerate(think_tanks)}
+    new_results.sort(key=lambda r: tt_order.get(r["_source"], len(think_tanks)))
+
     def _mark_sent_now(urls):
         nonlocal seen
         if not args.no_dedup:
@@ -137,6 +141,7 @@ def main():
 
     sent = send_batch(bot_token, chat_id, new_results, _mark_sent_now)
     logger.info(f"\nDone. {len(sent)} report(s) sent to Telegram.")
+    send_message(bot_token, chat_id, "✅ پایان جستجو — شما محتوای به‌روز را دریافت کردید.")
 
 
 if __name__ == "__main__":

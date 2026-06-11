@@ -22,6 +22,10 @@ on:
         description: 'Custom end date YYYY-MM-DD'
         default: ''
         required: false
+      is_scheduled:
+        description: 'true when triggered automatically as daily run (not manual)'
+        default: 'false'
+        required: false
 
 jobs:
   # Job 1: read config_schedule.json and decide if scheduled run should proceed
@@ -33,7 +37,8 @@ jobs:
       - uses: actions/checkout@v4
       - id: decide
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          IS_MANUAL_DISPATCH="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.is_scheduled != 'true' }}"
+          if [ "$IS_MANUAL_DISPATCH" = "true" ]; then
             echo "should_run=true" >> $GITHUB_OUTPUT
           else
             ENABLED=$(python -c "import json; d=json.load(open('config_schedule.json')); print(str(d.get('enabled',True)).lower())")
@@ -97,10 +102,11 @@ jobs:
           echo "date_from=$DATE_FROM" >> $GITHUB_OUTPUT
           echo "date_to=$DATE_TO"     >> $GITHUB_OUTPUT
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "extra=--no-dedup" >> $GITHUB_OUTPUT
-          else
+          IS_SCHEDULED="${{ github.event.inputs.is_scheduled }}"
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "$IS_SCHEDULED" = "true" ]; then
             echo "extra=" >> $GITHUB_OUTPUT
+          else
+            echo "extra=--no-dedup" >> $GITHUB_OUTPUT
           fi
 
       - name: Run Arabic monitor

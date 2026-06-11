@@ -194,12 +194,14 @@ def _normalize_url(url: str) -> str:
     return f"{host}{path}"
 
 
+_SITE_BATCH = 5  # sites per sub-query — smaller groups mean less inter-site competition
+
+
 def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
                    hl: str = "ar", gl: str = "eg", days: int = 1,
                    date_from: str = "", date_to: str = "",
                    title_only: bool = False) -> list:
     date_filter = tbs if tbs is not None else _make_tbs(days, date_from, date_to)
-    site_part = " OR ".join(f"site:{s}" for s in sites)
     allowed_domains = {s.lstrip("www.") for s in sites}
 
     results = []
@@ -224,21 +226,27 @@ def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
         if skipped:
             logger.info(f"  Filtered {skipped} result(s) (domain/pdf/index)")
 
-    # Pass 1: intitle search (2 keyword batches) — always runs
+    site_batches = [sites[i:i+_SITE_BATCH] for i in range(0, len(sites), _SITE_BATCH)]
+
+    # Pass 1: intitle search — 2 keyword batches × N site batches
     mid = len(keywords) // 2
-    for batch in [keywords[:mid], keywords[mid:]]:
-        kw_part = " OR ".join(f'intitle:"{k}"' for k in batch)
-        query = f"({site_part}) ({kw_part})"
-        _add_filtered(_serpapi_call(api_key, query, date_filter, hl, gl))
+    for site_batch in site_batches:
+        site_part = " OR ".join(f"site:{s}" for s in site_batch)
+        for kw_batch in [keywords[:mid], keywords[mid:]]:
+            kw_part = " OR ".join(f'intitle:"{k}"' for k in kw_batch)
+            _add_filtered(_serpapi_call(api_key, f"({site_part}) ({kw_part})",
+                                        date_filter, hl, gl))
 
     logger.info(f"Pass 1 (intitle): {len(results)} results")
 
     if not title_only:
-        # Pass 2: body search — catches articles where keyword appears in text not title
+        # Pass 2: body search — catches articles where keyword is in text not title
         body_kws = [k for k in keywords if " " in k] or keywords[:6]
         kw_body = " OR ".join(f'"{k}"' for k in body_kws)
-        query_body = f"({site_part}) ({kw_body})"
-        _add_filtered(_serpapi_call(api_key, query_body, date_filter, hl, gl))
+        for site_batch in site_batches:
+            site_part = " OR ".join(f"site:{s}" for s in site_batch)
+            _add_filtered(_serpapi_call(api_key, f"({site_part}) ({kw_body})",
+                                        date_filter, hl, gl))
         logger.info(f"Pass 1+2 total: {len(results)} results")
 
     return results

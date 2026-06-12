@@ -48,9 +48,29 @@ def normalize(text: str) -> str:
     return text.lower()
 
 
-def _matches(text: str, norm_keywords: list) -> bool:
+def compile_keywords(keywords: list) -> list:
+    """Latin-script keywords match on word boundaries ('iran' must not hit
+    'Tirana'); Arabic keywords match as substrings because prefixes attach
+    to the word itself (وإيران، بطهران…)."""
+    compiled = []
+    for k in keywords:
+        nk = normalize(k)
+        if re.fullmatch(r"[a-z0-9 \-']+", nk):
+            compiled.append(re.compile(r"\b" + re.escape(nk) + r"\b"))
+        else:
+            compiled.append(nk)
+    return compiled
+
+
+def _matches(text: str, compiled_keywords: list) -> bool:
     norm = normalize(text)
-    return any(k in norm for k in norm_keywords)
+    for k in compiled_keywords:
+        if isinstance(k, str):
+            if k in norm:
+                return True
+        elif k.search(norm):
+            return True
+    return False
 
 
 def _slug_text(url: str) -> str:
@@ -190,7 +210,7 @@ def find_matches(site_url: str, keywords: list, days: int = 1,
         win_start = date.today() - timedelta(days=days)
         win_end = date.today()
 
-    norm_keywords = [normalize(k) for k in keywords]
+    norm_keywords = compile_keywords(keywords)
     fetch_budget = MAX_ARTICLE_FETCHES
 
     entries = _collect_sitemap_entries(site_url)

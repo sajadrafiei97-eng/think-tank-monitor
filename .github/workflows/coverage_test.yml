@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: 'Days to look back (default: 7)'
-        default: '7'
+        description: 'Days to look back (default: 14)'
+        default: '14'
         required: false
 
 jobs:

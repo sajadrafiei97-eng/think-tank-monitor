@@ -194,7 +194,7 @@ def _normalize_url(url: str) -> str:
     return f"{host}{path}"
 
 
-_SITE_BATCH = 1  # one site per query — each site gets its own dedicated result slot
+_SITE_BATCH = 3  # sites per sub-query — balance between coverage and competition
 
 
 def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,

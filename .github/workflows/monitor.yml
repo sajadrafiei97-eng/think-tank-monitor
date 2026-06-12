@@ -2,8 +2,8 @@ name: Think Tank Monitor
 
 on:
   schedule:
-    # 9:00 AM Tehran (IRDT = UTC+4:30) → 04:30 UTC
-    - cron: '30 4 * * *'
+    # 9:00 AM Tehran (UTC+3:30 — Iran has no DST since 2022) → 05:30 UTC
+    - cron: '30 5 * * *'
   workflow_dispatch:
     inputs:
       days:
@@ -159,7 +159,7 @@ jobs:
           git add .tmp/seen_urls.json .tmp/seen_urls_en.json
           git diff --staged --quiet || (git commit -m "chore: update seen URLs [skip ci]" && git pull --rebase && git push)
 
-      - name: Watchdog — restart bot listener if stopped + weekly health report
+      - name: Watchdog — restart bot listener if stopped
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -218,10 +218,6 @@ jobs:
           else:
               print(f"Bot listener OK (status: {runs[0]['status'] if runs else 'unknown'})")
 
-          # --- Weekly health report (Wednesdays) ---
-          if datetime.now(timezone.utc).weekday() == 2 and not need_restart:
-              msg = "📊 گزارش هفتگی: سیستم پایش اندیشکده سالم است. ✅"
-              for tok, cid in BOTS:
-                  tg(tok, cid, msg)
-              print("Weekly health report sent.")
+          # Weekly health reporting moved to selfcheck.yml (Wednesdays 05:45 UTC)
+          # which actually verifies quota, runs, configs and site reachability.
           PYEOF

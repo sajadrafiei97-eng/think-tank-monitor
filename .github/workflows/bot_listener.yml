@@ -67,15 +67,15 @@ jobs:
               exit(0)
 
           now = datetime.now(timezone.utc)
-          # 9am Tehran = 04:30 UTC (IRDT=UTC+4:30)
-          trigger_utc = now.replace(hour=4, minute=30, second=0, microsecond=0)
+          # 9am Tehran = 05:30 UTC (UTC+3:30 — Iran has no DST since 2022)
+          trigger_utc = now.replace(hour=5, minute=30, second=0, microsecond=0)
 
           if now < trigger_utc:
               print(f"Not yet {trigger_utc.strftime('%H:%M')} UTC — skipping.")
               exit(0)
 
-          # Check if monitor.yml already ran today (after 04:00 UTC to avoid edge cases)
-          window_start = now.replace(hour=4, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+          # Check if monitor.yml already ran today (after 05:00 UTC to avoid edge cases)
+          window_start = now.replace(hour=5, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
           r = requests.get(
               f"https://api.github.com/repos/{REPO}/actions/workflows/monitor.yml/runs",
               headers=HEADERS,

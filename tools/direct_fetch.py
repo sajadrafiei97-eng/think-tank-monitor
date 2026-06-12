@@ -94,6 +94,54 @@ def _parse_date(raw: str):
     return None
 
 
+# Arabic-Indic (٠-٩) and Persian (۰-۹) digits → ASCII
+_DIGIT_TRANS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+
+_AR_MONTHS = {
+    "يناير": 1, "كانون الثاني": 1, "فبراير": 2, "شباط": 2,
+    "مارس": 3, "آذار": 3, "أبريل": 4, "ابريل": 4, "إبريل": 4, "نيسان": 4,
+    "مايو": 5, "أيار": 5, "ايار": 5, "يونيو": 6, "حزيران": 6,
+    "يوليو": 7, "تموز": 7, "أغسطس": 8, "اغسطس": 8, "آب": 8,
+    "سبتمبر": 9, "أيلول": 9, "ايلول": 9, "أكتوبر": 10, "اكتوبر": 10,
+    "تشرين الأول": 10, "نوفمبر": 11, "تشرين الثاني": 11,
+    "ديسمبر": 12, "كانون الأول": 12,
+}
+_AR_MONTH_RE = re.compile(
+    r"(\d{1,2})\s+(" + "|".join(map(re.escape, _AR_MONTHS)) + r")\s+(20\d{2})"
+)
+_YMD_RE = re.compile(r"\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b")
+_DMY_RE = re.compile(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2})\b")
+
+
+def _safe_date(y: int, m: int, d: int):
+    try:
+        return date(y, m, d)
+    except ValueError:
+        return None
+
+
+def sniff_date(text: str):
+    """Find a publish date in free text: handles Arabic-Indic digits,
+    ٢٠٢٦-٦-٤ / 18/05/2026 numeric forms and '١٥ مارس ٢٠٢٦' month names."""
+    text = text.translate(_DIGIT_TRANS)
+
+    m = _AR_MONTH_RE.search(text)
+    if m:
+        return _safe_date(int(m.group(3)), _AR_MONTHS[m.group(2)], int(m.group(1)))
+
+    m = _YMD_RE.search(text)
+    if m:
+        return _safe_date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+    m = _DMY_RE.search(text)
+    if m:
+        d1, d2 = int(m.group(1)), int(m.group(2))
+        day, month = (d1, d2) if d2 <= 12 else (d2, d1)  # Arabic sites: D/M/Y
+        return _safe_date(int(m.group(3)), month, day)
+
+    return None
+
+
 def _fetch_article_page(url: str, with_body: bool = False) -> tuple:
     """Fetch an article page once; extract (published_date, display_title, body_text)."""
     resp = _get(url)
@@ -114,11 +162,17 @@ def _fetch_article_page(url: str, with_body: bool = False) -> tuple:
             title = m.group(1).strip()
             break
     body = ""
-    if with_body:
+    if with_body or not found_date:
         soup = BeautifulSoup(html, "lxml")
         for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
             tag.decompose()
         body = soup.get_text(separator=" ", strip=True)[:40000]
+        if not found_date:
+            # no machine-readable meta date — sniff the visible byline area
+            # (e.g. rasanah prints '١٥ مارس ٢٠٢٦' as plain text)
+            found_date = sniff_date(body[:1500])
+    if not with_body:
+        body = ""
     return found_date, title, body
 
 
@@ -226,7 +280,9 @@ def find_matches(site_url: str, keywords: list, days: int = 1,
                       if urlparse(loc).path.strip("/")]
     else:
         scraped = _scrape_html(site_url)
-        candidates = [{"title": r["title"], "url": r["url"], "date": None}
+        # listing pages often print the date next to each link — sniff it
+        candidates = [{"title": r["title"], "url": r["url"],
+                       "date": sniff_date(r.get("context", "") + " " + r["title"])}
                       for r in scraped]
         if not candidates:
             method = "none"

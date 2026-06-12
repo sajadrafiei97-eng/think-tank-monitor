@@ -127,7 +127,12 @@ def _scrape_html(site_url: str) -> list:
 
         if ARTICLE_PATH_PATTERNS.search(href) or len(text) > 30:
             seen.add(href)
-            results.append({"title": text, "url": href, "summary": ""})
+            # capture nearby text — listing pages often print the publish
+            # date next to the link (e.g. ٢٠٢٦-٦-٤ on acpss.ahram.org.eg)
+            container = a.find_parent(["article", "li", "td", "div"]) or a.parent
+            context = container.get_text(" ", strip=True)[:200] if container else ""
+            results.append({"title": text, "url": href, "summary": "",
+                            "context": context})
 
     return results[:50]
 

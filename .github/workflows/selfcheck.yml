@@ -1,0 +1,34 @@
+name: Weekly Self-Check
+
+on:
+  schedule:
+    # Wednesdays 9:15 Tehran (UTC+3:30, Iran has no DST since 2022) → 05:45 UTC
+    - cron: '45 5 * * 3'
+  workflow_dispatch:
+
+jobs:
+  selfcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      - name: Create .env from secrets
+        run: |
+          cat > .env << 'EOF'
+          SERPAPI_KEY=${{ secrets.SERPAPI_KEY }}
+          SERPAPI_KEY_EN=${{ secrets.SERPAPI_KEY_EN }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN_EN=${{ secrets.TELEGRAM_BOT_TOKEN_EN }}
+          TELEGRAM_CHAT_ID_EN=${{ secrets.TELEGRAM_CHAT_ID_EN }}
+          GH_TOKEN=${{ secrets.GH_TOKEN }}
+          EOF
+
+      - name: Run self-check
+        run: python tools/self_check.py

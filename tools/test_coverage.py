@@ -30,7 +30,7 @@ think_tanks = config["think_tanks"]
 keywords = config["keywords"]
 sites = [tt["url"].replace("https://", "").replace("http://", "").rstrip("/") for tt in think_tanks]
 domain_to_name = {
-    urlparse(tt["url"]).netloc.lstrip("www."): tt["name"]
+    urlparse(tt["url"]).netloc.removeprefix("www."): tt["name"]
     for tt in think_tanks
 }
 
@@ -43,7 +43,7 @@ results = serpapi_search(serpapi_key, sites, keywords, tbs="qdr:m")
 # Group by domain
 by_domain = defaultdict(list)
 for r in results:
-    domain = urlparse(r["url"]).netloc.lstrip("www.")
+    domain = urlparse(r["url"]).netloc.removeprefix("www.")
     by_domain[domain].append(r["title"])
 
 # Show which sites have results
@@ -69,7 +69,7 @@ if missing:
         )
         r2.raise_for_status()
         for item in r2.json().get("organic_results", []):
-            d = urlparse(item.get("link", "")).netloc.lstrip("www.")
+            d = urlparse(item.get("link", "")).netloc.removeprefix("www.")
             by_domain["body:" + d].append(item.get("title", ""))
     except Exception as e:
         print(f"  body-only search error: {e}")

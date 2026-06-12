@@ -8,9 +8,8 @@ from urllib.parse import urlparse
 import yaml
 from dotenv import load_dotenv
 
-from direct_fetch import find_matches
 from notifier import send_batch, send_message
-from search_tool import search_all
+from search_tool import serpapi_user_query
 from state import filter_new_reports, load_seen_urls, mark_sent
 
 logging.basicConfig(
@@ -27,13 +26,13 @@ ENV_PATH = os.path.join(BASE_DIR, ".env")
 def _build_domain_map(think_tanks: list) -> dict:
     mapping = {}
     for tt in think_tanks:
-        domain = urlparse(tt["url"]).netloc.lstrip("www.")
+        domain = urlparse(tt["url"]).netloc.removeprefix("www.")
         mapping[domain] = tt["name"]
     return mapping
 
 
 def _resolve_source(url: str, domain_map: dict) -> str:
-    domain = urlparse(url).netloc.lstrip("www.")
+    domain = urlparse(url).netloc.removeprefix("www.")
     return domain_map.get(domain, domain)
 
 
@@ -68,16 +67,10 @@ def main():
     token_env  = creds.get("telegram_token_env", "TELEGRAM_BOT_TOKEN")
     chat_env   = creds.get("telegram_chat_env",  "TELEGRAM_CHAT_ID")
     serp_env   = creds.get("serpapi_key_env",     "SERPAPI_KEY")
-    google_env = creds.get("google_api_key_env",  "GOOGLE_API_KEY")
-    cse_env    = creds.get("google_cse_id_env",   "GOOGLE_CSE_ID")
-    tavily_env = creds.get("tavily_key_env",      "TAVILY_API_KEY")
 
     bot_token     = os.getenv(token_env,  "").strip()
     chat_id       = os.getenv(chat_env,   "").strip()
     serpapi_key   = os.getenv(serp_env,   "").strip()
-    google_api    = os.getenv(google_env, "").strip()
-    google_cse    = os.getenv(cse_env,    "").strip()
-    tavily_key    = os.getenv(tavily_env, "").strip()
 
     # Seen-URLs file (per-config so Arabic and English don't share state)
     seen_file = config.get("seen_urls_file", ".tmp/seen_urls.json")
@@ -87,8 +80,8 @@ def main():
         logger.error(f"{token_env} or {chat_env} not set in .env")
         sys.exit(1)
 
-    if not serpapi_key and not google_api and not tavily_key:
-        logger.error("No search API key found in .env")
+    if not serpapi_key:
+        logger.error(f"{serp_env} not set in .env")
         sys.exit(1)
 
     think_tanks = config["think_tanks"]
@@ -124,40 +117,15 @@ def main():
     title_only = (search_mode == "title")
     logger.info(f"Search mode: {search_mode} (title_only={title_only})")
 
-    results = search_all(google_api, google_cse, tavily_key, sites, keywords, serpapi_key,
-                         hl=hl, gl=gl, days=args.days,
-                         date_from=args.date_from, date_to=args.date_to,
-                         title_only=title_only)
-
-    # Direct-fetch fallback: sites the search engines returned nothing for
-    # (small sites are often poorly/late indexed by Google — fetch them directly)
-    covered = {urlparse(r["url"]).netloc.lstrip("www.") for r in results}
-    for tt in think_tanks:
-        domain = urlparse(tt["url"]).netloc.lstrip("www.")
-        if domain in covered:
-            continue
-        try:
-            direct = find_matches(tt["url"], keywords, days=args.days,
-                                  date_from=args.date_from, date_to=args.date_to,
-                                  fetch_body=not title_only)
-        except Exception as e:
-            logger.warning(f"[direct] {domain} failed: {e}")
-            continue
-        added = undated_kept = 0
-        for m in direct["matches"]:
-            if m["date"] is None:
-                # Undatable title matches come from current homepage/sitemap
-                # listings, so they're almost always fresh — keep a capped
-                # number (dedup stops repeats on scheduled runs). Body-matched
-                # ones stay excluded: too weak a signal without a date.
-                if m["via"] != "title" or undated_kept >= 5:
-                    continue
-                undated_kept += 1
-            results.append({"title": m["title"], "url": m["url"]})
-            added += 1
-        if added:
-            logger.info(f"[direct] {domain}: +{added} article(s) via direct fetch "
-                        f"({undated_kept} undated)")
+    # Single-engine flow (operator decision 2026-06-12): one Google query via
+    # SerpAPI with after/before date operators — Google's own dating decides
+    # the window. Direct fetch stays in coverage_report.py for diagnostics
+    # only; it once sent stale articles into a "today" run and is banned from
+    # the send path.
+    results = serpapi_user_query(serpapi_key, sites, keywords,
+                                 days=args.days,
+                                 date_from=args.date_from, date_to=args.date_to,
+                                 title_only=title_only, hl=hl, gl=gl)
 
     if not results:
         logger.info("No results found.")

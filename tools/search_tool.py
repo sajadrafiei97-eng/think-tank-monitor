@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 import requests
@@ -27,7 +27,10 @@ def _is_report_url(url: str) -> bool:
 
 
 def _domain(url: str) -> str:
-    return urlparse(url).netloc.lstrip("www.")
+    # Accepts full URLs and bare domains ("rawabetcenter.com" has no netloc
+    # when parsed directly — re-parse with a // prefix)
+    netloc = urlparse(url).netloc or urlparse("//" + url).netloc
+    return netloc.removeprefix("www.")
 
 
 def _is_allowed(url: str, allowed_domains: set) -> bool:
@@ -152,19 +155,22 @@ def _make_tbs(days: int = 1, date_from: str = "", date_to: str = "") -> str:
     return f"qdr:d{days}"
 
 
-def _serpapi_call(api_key: str, query: str, tbs: str, hl: str = "ar", gl: str = "eg") -> list:
+def _serpapi_call(api_key: str, query: str, tbs: str = "", hl: str = "ar",
+                  gl: str = "eg", num: int = 20) -> list:
+    params = {
+        "api_key": api_key,
+        "engine": "google",
+        "q": query,
+        "num": num,
+        "hl": hl,
+        "gl": gl,
+    }
+    if tbs:
+        params["tbs"] = tbs
     try:
         resp = requests.get(
             SERPAPI_URL,
-            params={
-                "api_key": api_key,
-                "engine": "google",
-                "q": query,
-                "num": 20,
-                "tbs": tbs,
-                "hl": hl,
-                "gl": gl,
-            },
+            params=params,
             timeout=20,
         )
         resp.raise_for_status()
@@ -197,7 +203,7 @@ def _serpapi_call(api_key: str, query: str, tbs: str, hl: str = "ar", gl: str = 
 
 def _normalize_url(url: str) -> str:
     parsed = urlparse(url)
-    host = parsed.netloc.lower().lstrip("www.")
+    host = parsed.netloc.lower().removeprefix("www.")
     path = parsed.path.rstrip("/")
     return f"{host}{path}"
 
@@ -210,7 +216,7 @@ def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
                    date_from: str = "", date_to: str = "",
                    title_only: bool = False) -> list:
     date_filter = tbs if tbs is not None else _make_tbs(days, date_from, date_to)
-    allowed_domains = {s.lstrip("www.") for s in sites}
+    allowed_domains = {_domain(s) for s in sites}
 
     results = []
     seen_normalized = set()
@@ -257,6 +263,62 @@ def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,
                                         date_filter, hl, gl))
         logger.info(f"Pass 1+2 total: {len(results)} results")
 
+    return results
+
+
+def serpapi_user_query(api_key: str, sites: list, keywords: list,
+                       days: int = 1, date_from: str = "", date_to: str = "",
+                       title_only: bool = False, hl: str = "ar",
+                       gl: str = "eg") -> list:
+    """
+    The operator-specified single Google query — one SerpAPI call per run:
+
+      (site:a OR site:b ...) (intitle:"k1" OR ...) after:YYYY-MM-DD before:YYYY-MM-DD
+
+    Google's own after/before operators decide the date window; whatever
+    Google returns (filtered to allowed domains, no files/index pages) is
+    what gets sent. No client-side date guessing.
+    """
+    today = datetime.now().date()
+    if date_from and date_to:
+        try:
+            start = datetime.strptime(date_from, "%Y-%m-%d").date()
+            end = datetime.strptime(date_to, "%Y-%m-%d").date()
+        except ValueError as exc:
+            logger.warning(f"Invalid date range ({date_from}/{date_to}): {exc} "
+                           f"— falling back to last {days} day(s)")
+            start, end = today - timedelta(days=days), today
+        # explicit ranges are inclusive → widen by 1 day on each side
+        # because Google's after/before are exclusive
+        after, before = start - timedelta(days=1), end + timedelta(days=1)
+    else:
+        # "last N days": after:(today-N) excludes day N+1 back, includes today
+        after, before = today - timedelta(days=days), today + timedelta(days=1)
+
+    site_part = " OR ".join(f"site:{s}" for s in sites)
+    if title_only:
+        kw_part = " OR ".join(f'intitle:"{k}"' for k in keywords)
+    else:
+        kw_part = " OR ".join(f'"{k}"' for k in keywords)
+    query = f"({site_part}) ({kw_part}) after:{after} before:{before}"
+    logger.info(f"Single-query mode ({'title' if title_only else 'full'}), "
+                f"window {after} → {before} (exclusive)")
+
+    items = _serpapi_call(api_key, query, hl=hl, gl=gl, num=50)
+    if len(items) >= 50:
+        logger.warning("Result page saturated (50) — some results may be cut off")
+
+    allowed_domains = {_domain(s) for s in sites}
+    results, seen_norm = [], set()
+    for r in items:
+        url = r["url"]
+        if not _is_allowed(url, allowed_domains) or not _is_report_url(url):
+            continue
+        norm = _normalize_url(url)
+        if norm not in seen_norm:
+            seen_norm.add(norm)
+            results.append(r)
+    logger.info(f"Single-query results: {len(results)} (of {len(items)} raw)")
     return results
 
 

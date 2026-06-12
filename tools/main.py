@@ -143,14 +143,21 @@ def main():
         except Exception as e:
             logger.warning(f"[direct] {domain} failed: {e}")
             continue
-        added = 0
+        added = undated_kept = 0
         for m in direct["matches"]:
             if m["date"] is None:
-                continue  # daily mode: undatable articles risk resending old content
+                # Undatable title matches come from current homepage/sitemap
+                # listings, so they're almost always fresh — keep a capped
+                # number (dedup stops repeats on scheduled runs). Body-matched
+                # ones stay excluded: too weak a signal without a date.
+                if m["via"] != "title" or undated_kept >= 5:
+                    continue
+                undated_kept += 1
             results.append({"title": m["title"], "url": m["url"]})
             added += 1
         if added:
-            logger.info(f"[direct] {domain}: +{added} article(s) via direct fetch")
+            logger.info(f"[direct] {domain}: +{added} article(s) via direct fetch "
+                        f"({undated_kept} undated)")
 
     if not results:
         logger.info("No results found.")

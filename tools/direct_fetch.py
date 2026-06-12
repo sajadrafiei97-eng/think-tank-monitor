@@ -29,6 +29,10 @@ _ARABIC_DIACRITICS = re.compile(r"[ً-ٰٟـ]")  # tashkeel + tatweel
 _DATE_META_PATTERNS = [
     re.compile(r'article:published_time["\']?\s+content=["\']([^"\']+)', re.I),
     re.compile(r'"datePublished"\s*:\s*"([^"]+)"'),
+    # microdata: <meta itemprop="datePublished" content="..."> or
+    # <span itemprop='datePublished' ...>2026-06-11</span> (e.g. rawabetcenter)
+    re.compile(r'itemprop=["\']datePublished["\'][^>]*content=["\']([^"\']+)', re.I),
+    re.compile(r'itemprop=["\']datePublished["\'][^>]*>\s*(\d{4}-\d{2}-\d{2})', re.I),
     re.compile(r'property=["\']og:updated_time["\']\s+content=["\']([^"\']+)', re.I),
     re.compile(r'<time[^>]+datetime=["\']([^"\']+)', re.I),
 ]

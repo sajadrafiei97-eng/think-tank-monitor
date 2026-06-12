@@ -100,8 +100,8 @@ def tavily_search(api_key: str, sites: list, keywords: list, days: int = 1) -> l
     try:
         resp = requests.post(
             TAVILY_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
             json={
-                "api_key": api_key,
                 "query": query,
                 "include_domains": domains,
                 "max_results": 20,
@@ -131,7 +131,8 @@ def tavily_search(api_key: str, sites: list, keywords: list, days: int = 1) -> l
         elif e.response is not None and e.response.status_code == 429:
             logger.warning("Tavily: quota exceeded")
         else:
-            logger.warning(f"Tavily HTTP error: {e}")
+            body = e.response.text[:200] if e.response is not None else ""
+            logger.warning(f"Tavily HTTP error: {e} — {body}")
     except Exception as e:
         logger.warning(f"Tavily failed: {e}")
 

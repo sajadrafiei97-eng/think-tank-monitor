@@ -1,0 +1,281 @@
+"""
+Direct-fetch fallback: discovers recent articles straight from a site's
+sitemap (or homepage scrape), matches keywords against title/URL-slug/body,
+and date-filters using sitemap lastmod or article meta tags.
+
+Used when search engines return nothing for a site (small sites are often
+poorly indexed by Google) or when the search API is rate-limited.
+Consumes NO search-API quota — only direct HTTP requests to the site itself.
+"""
+import logging
+import re
+from datetime import date, datetime, timedelta
+from urllib.parse import unquote, urljoin, urlparse
+
+from bs4 import BeautifulSoup
+
+from fetcher import _get, _scrape_html
+
+logger = logging.getLogger(__name__)
+
+# Per-site budget of extra article-page fetches (date extraction + body match)
+MAX_ARTICLE_FETCHES = 14
+MAX_CHILD_SITEMAPS = 8
+MAX_SITEMAP_ENTRIES = 500
+MAX_UNDATED_CANDIDATES = 40
+
+_ARABIC_DIACRITICS = re.compile(r"[ً-ٰٟـ]")  # tashkeel + tatweel
+
+_DATE_META_PATTERNS = [
+    re.compile(r'article:published_time["\']?\s+content=["\']([^"\']+)', re.I),
+    re.compile(r'"datePublished"\s*:\s*"([^"]+)"'),
+    re.compile(r'property=["\']og:updated_time["\']\s+content=["\']([^"\']+)', re.I),
+    re.compile(r'<time[^>]+datetime=["\']([^"\']+)', re.I),
+]
+
+_TITLE_PATTERNS = [
+    re.compile(r'property=["\']og:title["\']\s+content=["\']([^"\']+)', re.I),
+    re.compile(r"<title[^>]*>([^<]+)</title>", re.I),
+]
+
+
+def normalize(text: str) -> str:
+    """Arabic-aware normalization so 'ايران' matches 'إِيرَان' etc."""
+    text = _ARABIC_DIACRITICS.sub("", text)
+    text = (text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+                .replace("ى", "ي").replace("ئ", "ي").replace("ؤ", "و")
+                .replace("ة", "ه"))
+    return text.lower()
+
+
+def _matches(text: str, norm_keywords: list) -> bool:
+    norm = normalize(text)
+    return any(k in norm for k in norm_keywords)
+
+
+def _slug_text(url: str) -> str:
+    """Decode the URL path into searchable text (slugs often contain the title)."""
+    path = unquote(urlparse(url).path)
+    return re.sub(r"[-_/+]", " ", path)
+
+
+def _parse_date(raw: str):
+    raw = raw.strip()
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", raw)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    return None
+
+
+def _fetch_article_page(url: str, with_body: bool = False) -> tuple:
+    """Fetch an article page once; extract (published_date, display_title, body_text)."""
+    resp = _get(url)
+    if not resp:
+        return None, "", ""
+    html = resp.text[:200000]
+    found_date = None
+    for pat in _DATE_META_PATTERNS:
+        m = pat.search(html)
+        if m:
+            found_date = _parse_date(m.group(1))
+            if found_date:
+                break
+    title = ""
+    for pat in _TITLE_PATTERNS:
+        m = pat.search(html)
+        if m:
+            title = m.group(1).strip()
+            break
+    body = ""
+    if with_body:
+        soup = BeautifulSoup(html, "lxml")
+        for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
+            tag.decompose()
+        body = soup.get_text(separator=" ", strip=True)[:40000]
+    return found_date, title, body
+
+
+def _sitemap_candidates(site_url: str) -> list:
+    """Possible sitemap locations: robots.txt + common paths."""
+    candidates = []
+    robots = _get(urljoin(site_url, "/robots.txt"))
+    if robots:
+        for line in robots.text.splitlines():
+            if line.lower().startswith("sitemap:"):
+                candidates.append(line.split(":", 1)[1].strip())
+    candidates += [
+        urljoin(site_url, "/sitemap.xml"),
+        urljoin(site_url, "/sitemap_index.xml"),
+        urljoin(site_url, "/wp-sitemap.xml"),
+    ]
+    seen = set()
+    return [c for c in candidates if not (c in seen or seen.add(c))]
+
+
+def _parse_sitemap_xml(xml_text: str) -> tuple:
+    """Returns (kind, entries) where kind is 'index' or 'urlset',
+    entries is a list of (loc, lastmod_date_or_None)."""
+    kind = "index" if "<sitemapindex" in xml_text[:2000] else "urlset"
+    entries = []
+    for m in re.finditer(
+        r"<loc>\s*([^<\s]+)\s*</loc>(?:\s*<lastmod>([^<]+)</lastmod>)?", xml_text
+    ):
+        loc = m.group(1).strip()
+        lastmod = _parse_date(m.group(2)) if m.group(2) else None
+        entries.append((loc, lastmod))
+    return kind, entries
+
+
+def _collect_sitemap_entries(site_url: str) -> list:
+    """Gather (url, lastmod) pairs from the site's sitemap tree."""
+    for sm_url in _sitemap_candidates(site_url):
+        resp = _get(sm_url)
+        if not resp or "<" not in resp.text[:200]:
+            continue
+        kind, entries = _parse_sitemap_xml(resp.text)
+        if not entries:
+            continue
+
+        if kind == "urlset":
+            return entries[:MAX_SITEMAP_ENTRIES]
+
+        # sitemap index → fetch children, newest lastmod first.
+        # Also include the tail in document order: WordPress-style sitemaps
+        # put the newest posts in the highest-numbered child, often w/o lastmod.
+        by_lastmod = sorted(entries, key=lambda e: e[1] or date.min, reverse=True)
+        picked, seen_children = [], set()
+        for child_url, _ in by_lastmod[:MAX_CHILD_SITEMAPS - 2] + entries[-2:]:
+            if child_url not in seen_children:
+                seen_children.add(child_url)
+                picked.append(child_url)
+        collected = []
+        for child_url in picked:
+            child = _get(child_url)
+            if not child:
+                continue
+            child_kind, child_entries = _parse_sitemap_xml(child.text)
+            if child_kind == "urlset":
+                collected.extend(child_entries)
+            if len(collected) >= MAX_SITEMAP_ENTRIES:
+                break
+        if collected:
+            return collected[:MAX_SITEMAP_ENTRIES]
+    return []
+
+
+def find_matches(site_url: str, keywords: list, days: int = 1,
+                 date_from: str = "", date_to: str = "",
+                 fetch_body: bool = True) -> dict:
+    """
+    Discover keyword-matching articles on a site without any search API.
+
+    Returns {
+      "matches":      [{title, url, date, via}],  # within the date window
+      "latest_older": {title, url, date} | None,  # newest match OUTSIDE window
+      "method":       "sitemap" | "html" | "none",
+      "checked":      int,
+    }
+    """
+    if date_from and date_to:
+        try:
+            win_start = datetime.strptime(date_from, "%Y-%m-%d").date()
+            win_end = datetime.strptime(date_to, "%Y-%m-%d").date()
+        except ValueError:
+            win_start = date.today() - timedelta(days=days)
+            win_end = date.today()
+    else:
+        win_start = date.today() - timedelta(days=days)
+        win_end = date.today()
+
+    norm_keywords = [normalize(k) for k in keywords]
+    fetch_budget = MAX_ARTICLE_FETCHES
+
+    entries = _collect_sitemap_entries(site_url)
+    method = "sitemap" if entries else "html"
+
+    if entries:
+        candidates = [{"title": "", "url": loc, "date": lastmod}
+                      for loc, lastmod in entries
+                      if urlparse(loc).path.strip("/")]
+    else:
+        scraped = _scrape_html(site_url)
+        candidates = [{"title": r["title"], "url": r["url"], "date": None}
+                      for r in scraped]
+        if not candidates:
+            method = "none"
+
+    # newest first; undated last (capped — they cost a page fetch to date)
+    dated = sorted([c for c in candidates if c["date"]],
+                   key=lambda c: c["date"], reverse=True)
+    undated = [c for c in candidates if not c["date"]][:MAX_UNDATED_CANDIDATES]
+    candidates = dated + undated
+
+    matches = []
+    latest_older = None
+    seen_urls = set()
+    body_candidates = []
+
+    for c in candidates:
+        url = c["url"]
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+
+        # cheap pre-filter: skip clearly-old dated entries (keep newest-older for reporting)
+        if c["date"] and c["date"] < win_start:
+            if _matches(c["title"] + " " + _slug_text(url), norm_keywords):
+                if not latest_older or c["date"] > latest_older["date"]:
+                    latest_older = {"title": c["title"] or _slug_text(url).strip(),
+                                    "url": url, "date": c["date"]}
+            continue
+
+        title_matched = _matches(c["title"] + " " + _slug_text(url), norm_keywords)
+
+        if title_matched:
+            art_date, art_title = c["date"], c["title"]
+            if (not art_date or not art_title) and fetch_budget > 0:
+                fetch_budget -= 1
+                meta_date, meta_title, _ = _fetch_article_page(url)
+                art_date = art_date or meta_date
+                art_title = art_title or meta_title
+            if art_date and art_date < win_start:
+                if not latest_older or art_date > latest_older["date"]:
+                    latest_older = {"title": art_title or _slug_text(url).strip(),
+                                    "url": url, "date": art_date}
+                continue
+            if art_date and art_date > win_end:
+                continue
+            matches.append({
+                "title": art_title or _slug_text(url).strip(),
+                "url": url,
+                "date": art_date,
+                "via": "title",
+            })
+        elif c["date"]:  # in-window, title didn't match → candidate for body pass
+            body_candidates.append(c)
+
+    if fetch_body:
+        for c in body_candidates:
+            if fetch_budget <= 0:
+                break
+            fetch_budget -= 1
+            meta_date, meta_title, text = _fetch_article_page(c["url"], with_body=True)
+            if text and _matches(text, norm_keywords):
+                matches.append({
+                    "title": meta_title or c["title"] or _slug_text(c["url"]).strip(),
+                    "url": c["url"],
+                    "date": c["date"] or meta_date,
+                    "via": "body",
+                })
+
+    logger.info(f"[direct] {urlparse(site_url).netloc}: method={method} "
+                f"checked={len(seen_urls)} matched={len(matches)}")
+    return {
+        "matches": matches,
+        "latest_older": latest_older,
+        "method": method,
+        "checked": len(seen_urls),
+    }

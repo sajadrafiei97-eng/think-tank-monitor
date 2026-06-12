@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import yaml
 from dotenv import load_dotenv
 
+from direct_fetch import find_matches
 from notifier import send_batch, send_message
 from search_tool import search_all
 from state import filter_new_reports, load_seen_urls, mark_sent
@@ -127,6 +128,29 @@ def main():
                          hl=hl, gl=gl, days=args.days,
                          date_from=args.date_from, date_to=args.date_to,
                          title_only=title_only)
+
+    # Direct-fetch fallback: sites the search engines returned nothing for
+    # (small sites are often poorly/late indexed by Google — fetch them directly)
+    covered = {urlparse(r["url"]).netloc.lstrip("www.") for r in results}
+    for tt in think_tanks:
+        domain = urlparse(tt["url"]).netloc.lstrip("www.")
+        if domain in covered:
+            continue
+        try:
+            direct = find_matches(tt["url"], keywords, days=args.days,
+                                  date_from=args.date_from, date_to=args.date_to,
+                                  fetch_body=not title_only)
+        except Exception as e:
+            logger.warning(f"[direct] {domain} failed: {e}")
+            continue
+        added = 0
+        for m in direct["matches"]:
+            if m["date"] is None:
+                continue  # daily mode: undatable articles risk resending old content
+            results.append({"title": m["title"], "url": m["url"]})
+            added += 1
+        if added:
+            logger.info(f"[direct] {domain}: +{added} article(s) via direct fetch")
 
     if not results:
         logger.info("No results found.")

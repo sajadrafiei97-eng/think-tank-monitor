@@ -1,17 +1,26 @@
 """
 Per-site coverage diagnostic: tests each site with both intitle and body search,
 correctly handles SerpAPI "no results" responses, and reports to Telegram.
-Uses both SERPAPI_KEY and SERPAPI_KEY_EN to avoid quota exhaustion.
+Rotates SERPAPI_KEY / SERPAPI_KEY_EN when both exist in .env.
+
+Pass 3 (direct): sites where Google found nothing — or the search API
+failed/rate-limited — are checked by fetching the site's own sitemap/homepage
+(zero API quota). Empty sites are annotated with the date of the most recent
+keyword match OUTSIDE the window, so a near-miss (e.g. a 32-day-old article in
+a 30-day test) is visible instead of looking like a blind spot.
 """
 import argparse
 import os
 import sys
 import time
+from datetime import date
 from urllib.parse import urlparse
 
 import requests
 import yaml
 from dotenv import load_dotenv
+
+from direct_fetch import find_matches
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
@@ -163,9 +172,10 @@ def main():
 
     found_intitle = []
     found_body    = []
-    empty         = []
-    quota_skip    = []
-    errors        = []
+    found_direct  = []   # (name, site, count, reason, sample_matches)
+    empty         = []   # (name, site, latest_older)
+    quota_skip    = []   # (name, site, latest_older) — search skipped, direct=0
+    errors        = []   # (name, site, err, latest_older)
     quota_hit     = False
 
     for tt in think_tanks:
@@ -173,30 +183,52 @@ def main():
         name = tt["name"]
 
         if quota_hit:
-            quota_skip.append((name, site))
-            print(f"⏭ {site}: skipped (quota)")
-            continue
-
-        count, via, status = search_site(site, days)
-        print(f"{'✅' if count > 0 else ('❌' if count == 0 else '⚠')} {site}: "
-              f"{f'{count} via {via}' if count > 0 else status if count < 0 else 'no results'}")
+            count, via, status = -1, "", "quota"
+            print(f"⏭ {site}: search skipped (quota) → direct check")
+        else:
+            count, via, status = search_site(site, days)
+            if count == -1:
+                quota_hit = True
+            print(f"{'✅' if count > 0 else ('❌' if count == 0 else '⚠')} {site}: "
+                  f"{f'{count} via {via}' if count > 0 else status if count < 0 else 'no results'}")
 
         if count > 0 and via == "intitle":
             found_intitle.append((name, site, count))
         elif count > 0 and via == "body":
             found_body.append((name, site, count))
-        elif count == 0:
-            empty.append((name, site))
-        elif count == -1:
-            quota_hit = True
-            quota_skip.append((name, site))
         else:
-            errors.append((name, site, status))
+            # Pass 3: search found nothing / failed → check the site directly (free)
+            try:
+                direct = find_matches(tt["url"], keywords, days=days)
+            except Exception as e:
+                print(f"  direct check failed: {e}")
+                direct = {"matches": [], "latest_older": None}
+
+            n_direct = len(direct["matches"])
+            if n_direct > 0:
+                reason = ("کوتا" if status == "quota"
+                          else "خطای جستجو" if count == -2 else "گوگل ۰ نتیجه")
+                found_direct.append((name, site, n_direct, reason,
+                                     direct["matches"][:3]))
+                print(f"  🌐 direct: {n_direct} match(es)")
+            elif status == "quota":
+                quota_skip.append((name, site, direct["latest_older"]))
+            elif count == 0:
+                empty.append((name, site, direct["latest_older"]))
+            else:
+                errors.append((name, site, status, direct["latest_older"]))
 
         time.sleep(1)
 
     total = len(think_tanks)
-    found_n = len(found_intitle) + len(found_body)
+    found_n = len(found_intitle) + len(found_body) + len(found_direct)
+
+    def _older_note(latest_older) -> str:
+        if not latest_older:
+            return ""
+        d = latest_older["date"]
+        ago = (date.today() - d).days
+        return f"\n    آخرین مطلب مرتبط: {d} ({ago} روز پیش، خارج از بازه)"
 
     lines = [f"<b>📊 گزارش پوشش سایت‌ها ({days} روز)</b>\n"]
 
@@ -210,20 +242,28 @@ def main():
         for name, _, count in sorted(found_body, key=lambda x: -x[2]):
             lines.append(f"  • {name} — {count} نتیجه")
 
+    if found_direct:
+        lines.append(f"\n<b>🌐 direct — واکشی مستقیم سایت ({len(found_direct)}):</b>")
+        for name, _, count, reason, samples in sorted(found_direct, key=lambda x: -x[2]):
+            lines.append(f"  • {name} — {count} نتیجه ({reason})")
+            for m in samples:
+                d = f" [{m['date']}]" if m.get("date") else ""
+                lines.append(f"      ◦ {m['title'][:70]}{d}")
+
     if empty:
         lines.append(f"\n<b>❌ بدون نتیجه ({len(empty)}/{total}):</b>")
-        for name, site in empty:
-            lines.append(f"  • {name}\n    ({site})")
+        for name, site, latest_older in empty:
+            lines.append(f"  • {name}\n    ({site}){_older_note(latest_older)}")
 
     if quota_skip:
-        lines.append(f"\n<b>⏸ کوتا تموم شد — تست نشد ({len(quota_skip)}):</b>")
-        for name, _ in quota_skip:
-            lines.append(f"  • {name}")
+        lines.append(f"\n<b>⏸ کوتا — فقط direct تست شد، نتیجه ۰ ({len(quota_skip)}):</b>")
+        for name, _, latest_older in quota_skip:
+            lines.append(f"  • {name}{_older_note(latest_older)}")
 
     if errors:
-        lines.append(f"\n<b>⚠️ خطا ({len(errors)}):</b>")
-        for name, _, err in errors:
-            lines.append(f"  • {name}: {err[:60]}")
+        lines.append(f"\n<b>⚠️ خطا — direct هم ۰ ({len(errors)}):</b>")
+        for name, _, err, latest_older in errors:
+            lines.append(f"  • {name}: {err[:60]}{_older_note(latest_older)}")
 
     lines.append(f"\n<b>جمع: {found_n}/{total} دارای نتیجه</b>")
 
@@ -233,7 +273,8 @@ def main():
         time.sleep(1)
 
     print(f"\nDone. intitle:{len(found_intitle)} body:{len(found_body)} "
-          f"empty:{len(empty)} quota:{len(quota_skip)} error:{len(errors)}")
+          f"direct:{len(found_direct)} empty:{len(empty)} "
+          f"quota:{len(quota_skip)} error:{len(errors)}")
 
 
 if __name__ == "__main__":

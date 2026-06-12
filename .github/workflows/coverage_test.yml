@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: 'Days to look back (default: 30)'
-        default: '30'
+        description: 'Days to look back (default: 7)'
+        default: '7'
         required: false
 
 jobs:
@@ -24,6 +24,7 @@ jobs:
         run: |
           cat > .env << 'EOF'
           SERPAPI_KEY=${{ secrets.SERPAPI_KEY }}
+          SERPAPI_KEY_EN=${{ secrets.SERPAPI_KEY_EN }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOF

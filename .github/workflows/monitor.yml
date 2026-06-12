@@ -75,6 +75,9 @@ jobs:
           SERPAPI_KEY_EN=${{ secrets.SERPAPI_KEY_EN }}
           TELEGRAM_BOT_TOKEN_EN=${{ secrets.TELEGRAM_BOT_TOKEN_EN }}
           TELEGRAM_CHAT_ID_EN=${{ secrets.TELEGRAM_CHAT_ID_EN }}
+          GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }}
+          TAVILY_API_KEY=${{ secrets.TAVILY_API_KEY }}
           EOF
 
       - name: Create .tmp directory

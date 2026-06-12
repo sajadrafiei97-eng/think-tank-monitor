@@ -35,18 +35,25 @@ def _is_allowed(url: str, allowed_domains: set) -> bool:
     return any(d == a or d.endswith("." + a) for a in allowed_domains)
 
 
-def google_search(api_key: str, cse_id: str, sites: list, keywords: list) -> list:
+def google_search(api_key: str, cse_id: str, sites: list, keywords: list,
+                  days: int = 1, title_only: bool = False) -> list:
     results = []
     site_part = " OR ".join(f"site:{s}" for s in sites)
 
     # Split keywords into 2 batches to stay within query length limits
     mid = len(keywords) // 2
-    batches = [keywords[:mid], keywords[mid:]]
-
-    for batch in batches:
+    queries = []
+    for batch in [keywords[:mid], keywords[mid:]]:
         kw_part = " OR ".join(f'intitle:"{k}"' for k in batch)
-        query = f"({site_part}) ({kw_part})"
+        queries.append(f"({site_part}) ({kw_part})")
 
+    if not title_only:
+        # body pass — same keyword subset the other engines use
+        body_kws = [k for k in keywords if " " in k] or keywords[:6]
+        kw_part = " OR ".join(f'"{k}"' for k in body_kws)
+        queries.append(f"({site_part}) ({kw_part})")
+
+    for query in queries:
         try:
             resp = requests.get(
                 GOOGLE_CSE_URL,
@@ -55,7 +62,7 @@ def google_search(api_key: str, cse_id: str, sites: list, keywords: list) -> lis
                     "cx": cse_id,
                     "q": query,
                     "num": 10,
-                    "dateRestrict": "d1",
+                    "dateRestrict": f"d{days}",
                 },
                 timeout=15,
             )
@@ -82,7 +89,7 @@ def google_search(api_key: str, cse_id: str, sites: list, keywords: list) -> lis
     return results
 
 
-def tavily_search(api_key: str, sites: list, keywords: list) -> list:
+def tavily_search(api_key: str, sites: list, keywords: list, days: int = 1) -> list:
     # Use most distinctive keywords (length > 4 chars, prefer multi-word)
     ranked = sorted(keywords, key=lambda k: (len(k.split()) > 1, len(k)), reverse=True)
     query_keywords = ranked[:12]
@@ -99,7 +106,7 @@ def tavily_search(api_key: str, sites: list, keywords: list) -> list:
                 "include_domains": domains,
                 "max_results": 20,
                 "topic": "news",
-                "days": 1,
+                "days": days,
                 "include_answer": False,
                 "include_raw_content": False,
             },
@@ -267,19 +274,32 @@ def search_all(google_api_key: str, google_cse_id: str, tavily_api_key: str,
                 seen_urls.add(url)
                 all_results.append(r)
 
-    if google_api_key and google_cse_id:
-        logger.info("Running Google CSE search...")
-        _add(google_search(google_api_key, google_cse_id, sites, keywords))
-    else:
-        logger.info("Google CSE: skipped (no credentials)")
+    custom_range = bool(date_from and date_to)
 
-    if tavily_api_key and not title_only:
-        logger.info("Running Tavily search...")
-        _add(tavily_search(tavily_api_key, sites, keywords))
-    elif tavily_api_key:
-        logger.info("Tavily: skipped (title-only mode)")
+    if not google_api_key or not google_cse_id:
+        logger.info("Google CSE: skipped (no credentials)")
+    elif custom_range:
+        logger.info("Google CSE: skipped (custom date range not supported)")
     else:
+        logger.info("Running Google CSE search...")
+        _add(google_search(google_api_key, google_cse_id, sites, keywords,
+                           days=days, title_only=title_only))
+
+    if not tavily_api_key:
         logger.info("Tavily: skipped (no credentials)")
+    elif custom_range:
+        logger.info("Tavily: skipped (custom date range not supported)")
+    else:
+        logger.info("Running Tavily search...")
+        tv = tavily_search(tavily_api_key, sites, keywords, days=days)
+        if title_only and tv:
+            # Tavily has no intitle operator — enforce title mode client-side
+            from direct_fetch import compile_keywords, _matches
+            ck = compile_keywords(keywords)
+            kept = [r for r in tv if _matches(r.get("title", ""), ck)]
+            logger.info(f"Tavily title filter: {len(tv)} → {len(kept)}")
+            tv = kept
+        _add(tv)
 
     if serpapi_key:
         logger.info(f"Running SerpAPI search (title_only={title_only})...")

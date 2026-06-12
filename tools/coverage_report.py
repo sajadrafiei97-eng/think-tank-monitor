@@ -88,46 +88,59 @@ def _serpapi_call(query: str, days: int) -> tuple[int, str]:
     """
     Returns (count, status).
     count >= 0 : results found
-    count == -1: quota exhausted → stop all searches
+    count == -1: quota exhausted on ALL keys → stop all searches
     count == -2: other error
+
+    A key that reports quota/429 is dropped from the rotation and the call
+    is retried with the remaining key(s), so one dead key can't kill the run.
     """
-    try:
-        resp = requests.get(
-            SERPAPI_URL,
-            params={
-                "api_key": _next_key(),
-                "engine": "google",
-                "q": query,
-                "num": 10,
-                "tbs": f"qdr:d{days}",
-                "hl": "ar",
-                "gl": "eg",
-            },
-            timeout=25,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    while SERPAPI_KEYS:
+        key = _next_key()
+        try:
+            resp = requests.get(
+                SERPAPI_URL,
+                params={
+                    "api_key": key,
+                    "engine": "google",
+                    "q": query,
+                    "num": 10,
+                    "tbs": f"qdr:d{days}",
+                    "hl": "ar",
+                    "gl": "eg",
+                },
+                timeout=25,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-        if "error" in data:
-            err = str(data["error"])
-            # "no results" is a valid 0-result response, not a real error
-            if NO_RESULTS_MSG in err.lower():
-                return 0, "ok"
-            err_lower = err.lower()
-            if "run out" in err_lower or "quota" in err_lower or "credit" in err_lower:
-                return -1, "quota"
-            return -2, err
+            if "error" in data:
+                err = str(data["error"])
+                # "no results" is a valid 0-result response, not a real error
+                if NO_RESULTS_MSG in err.lower():
+                    return 0, "ok"
+                err_lower = err.lower()
+                if "run out" in err_lower or "quota" in err_lower or "credit" in err_lower:
+                    if key in SERPAPI_KEYS:
+                        SERPAPI_KEYS.remove(key)
+                        print(f"  (key …{key[-6:]} exhausted — {len(SERPAPI_KEYS)} key(s) left)")
+                    continue
+                return -2, err
 
-        return len(data.get("organic_results", [])), "ok"
+            return len(data.get("organic_results", [])), "ok"
 
-    except requests.HTTPError as e:
-        code = e.response.status_code if e.response is not None else 0
-        if code == 429:
-            time.sleep(10)
-            return -1, "rate_limit"
-        return -2, f"HTTP {code}"
-    except Exception as e:
-        return -2, str(e)[:80]
+        except requests.HTTPError as e:
+            code = e.response.status_code if e.response is not None else 0
+            if code == 429:
+                time.sleep(10)
+                if key in SERPAPI_KEYS:
+                    SERPAPI_KEYS.remove(key)
+                    print(f"  (key …{key[-6:]} rate-limited — {len(SERPAPI_KEYS)} key(s) left)")
+                continue
+            return -2, f"HTTP {code}"
+        except Exception as e:
+            return -2, str(e)[:80]
+
+    return -1, "quota"
 
 
 def search_site(site: str, days: int) -> tuple[int, str, str]:

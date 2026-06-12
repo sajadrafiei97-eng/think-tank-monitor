@@ -34,7 +34,8 @@ domain_to_name = {
     for tt in think_tanks
 }
 
-print("Searching last 30 days across all 22 sites...\n")
+n_sites = len(think_tanks)
+print(f"Searching last 30 days across all {n_sites} sites...\n")
 
 # Use last-month filter for broad coverage test
 results = serpapi_search(serpapi_key, sites, keywords, tbs="qdr:m")
@@ -78,4 +79,5 @@ for domain in sorted(domain_to_name.keys()):
     body_mark = f"✓ {len(by_domain['body:'+domain])}" if ("body:" + domain) in by_domain else ("—" if domain not in found_domains else "")
     print(f"{domain:<40} {intitle_mark:<8} {body_mark}")
 
-print(f"\nintitle پوشش: {len(found_domains)}/22   body پوشش: {len(found_domains | {d[5:] for d in by_domain if d.startswith('body:')})}/22")
+total = len(domain_to_name)
+print(f"\nintitle پوشش: {len(found_domains)}/{total}   body پوشش: {len(found_domains | {d[5:] for d in by_domain if d.startswith('body:')})}/{total}")

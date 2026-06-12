@@ -26,13 +26,13 @@ think_tanks:
   - name: "معهد دول الخليج العربي في واشنطن"
     url: "https://agsiw.org"
 
-  - name: "مركز دراسات حقيقية"
+  - name: "مركز ترو للدراسات"
     url: "https://truestudies.org"
 
   - name: "مركز تريندز للبحوث والاستشارات"
     url: "https://trendsgroup.org"
 
-  - name: "المركز الأوروبي العربي للتدريب"
+  - name: "المركز الأوروبي لدراسات مكافحة الإرهاب والاستخبارات"
     url: "https://europarabct.com"
 
   - name: "رصانة - المعهد الدولي للدراسات الإيرانية"
@@ -44,7 +44,7 @@ think_tanks:
   - name: "مركز الجزيرة للدراسات"
     url: "https://studies.aljazeera.net"
 
-  - name: "مركز العروبة للدراسات والأبحاث"
+  - name: "مركز عروبة لأبحاث والتفكير الاستراتيجي"
     url: "https://orouba.ps"
 
   - name: "مركز حوار العراق"
@@ -66,7 +66,16 @@ think_tanks:
     url: "https://raseef22.net"
 
   - name: "مركز الإمارات للسياسات"
-    url: "https://epc.ae"
+    url: "https://epc.ae/ar"
+
+  - name: "مركز المنبر للدراسات والتنمية المستدامة"
+    url: "https://almanbar.org"
+
+  - name: "مركز أمد للدراسات"
+    url: "https://amadcps.com"
+
+  - name: "مركز شاف لتحليل الأزمات والدراسات المستقبلية"
+    url: "https://shafcenter.org"
 
 keywords:
   - "ايران"

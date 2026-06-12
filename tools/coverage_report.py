@@ -3,6 +3,7 @@ Per-site coverage diagnostic: tests each site with both intitle and body search,
 correctly handles SerpAPI "no results" responses, and reports to Telegram.
 Uses both SERPAPI_KEY and SERPAPI_KEY_EN to avoid quota exhaustion.
 """
+import argparse
 import os
 import sys
 import time
@@ -15,13 +16,28 @@ from dotenv import load_dotenv
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--config", default="config.yaml")
+_args, _ = _ap.parse_known_args()
+
+with open(os.path.join(BASE_DIR, _args.config), encoding="utf-8") as f:
+    config = yaml.safe_load(f)
+
+# Read credentials from config (falls back to Arabic defaults)
+creds     = config.get("credentials", {})
+serp_env  = creds.get("serpapi_key_env",    "SERPAPI_KEY")
+token_env = creds.get("telegram_token_env", "TELEGRAM_BOT_TOKEN")
+chat_env  = creds.get("telegram_chat_env",  "TELEGRAM_CHAT_ID")
+
+# Rotate between two keys to avoid quota exhaustion
+_alt_serp = "SERPAPI_KEY_EN" if serp_env == "SERPAPI_KEY" else "SERPAPI_KEY"
 SERPAPI_KEYS = [k for k in [
-    os.getenv("SERPAPI_KEY", "").strip(),
-    os.getenv("SERPAPI_KEY_EN", "").strip(),
+    os.getenv(serp_env,   "").strip(),
+    os.getenv(_alt_serp,  "").strip(),
 ] if k]
 
-BOT_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+BOT_TOKEN   = os.getenv(token_env, "").strip()
+CHAT_ID     = os.getenv(chat_env,  "").strip()
 SERPAPI_URL = "https://serpapi.com/search"
 
 NO_RESULTS_MSG = "google hasn't returned any results for this query"
@@ -30,9 +46,6 @@ if not SERPAPI_KEYS:
     print("No SERPAPI key found"); sys.exit(1)
 if not BOT_TOKEN or not CHAT_ID:
     print("Telegram credentials not set"); sys.exit(1)
-
-with open(os.path.join(BASE_DIR, "config.yaml"), encoding="utf-8") as f:
-    config = yaml.safe_load(f)
 
 think_tanks = config["think_tanks"]
 keywords    = config["keywords"]

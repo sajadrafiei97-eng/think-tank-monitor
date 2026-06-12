@@ -7,6 +7,10 @@ on:
         description: 'Days to look back (default: 14)'
         default: '14'
         required: false
+      system:
+        description: 'System to test: arabic or english'
+        default: 'arabic'
+        required: false
 
 jobs:
   coverage:
@@ -27,9 +31,16 @@ jobs:
           SERPAPI_KEY_EN=${{ secrets.SERPAPI_KEY_EN }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN_EN=${{ secrets.TELEGRAM_BOT_TOKEN_EN }}
+          TELEGRAM_CHAT_ID_EN=${{ secrets.TELEGRAM_CHAT_ID_EN }}
           EOF
 
       - name: Run coverage report
         env:
           COVERAGE_DAYS: ${{ github.event.inputs.days }}
-        run: python tools/coverage_report.py
+        run: |
+          if [ "${{ github.event.inputs.system }}" = "english" ]; then
+            python tools/coverage_report.py --config config_en.yaml
+          else
+            python tools/coverage_report.py --config config.yaml
+          fi

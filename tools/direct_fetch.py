@@ -23,6 +23,7 @@ MAX_ARTICLE_FETCHES = 14
 MAX_CHILD_SITEMAPS = 8
 MAX_SITEMAP_ENTRIES = 500
 MAX_UNDATED_CANDIDATES = 40
+MAX_LISTING_FETCHES = 6
 
 _ARABIC_DIACRITICS = re.compile(r"[ً-ٰٟـ]")  # tashkeel + tatweel
 
@@ -41,6 +42,16 @@ _TITLE_PATTERNS = [
     re.compile(r'property=["\']og:title["\']\s+content=["\']([^"\']+)', re.I),
     re.compile(r"<title[^>]*>([^<]+)</title>", re.I),
 ]
+
+_LISTING_SEGMENTS = {
+    "blog", "blogs", "article", "articles", "posts", "post",
+    "news", "publications", "publication", "studies", "reports",
+    "المقالات", "مقالات", "المدونة", "مدونة",
+}
+_TAXONOMY_SEGMENTS = {
+    "category", "categories", "tag", "tags", "author", "page",
+    "تصنيف", "وسم", "كاتب",
+}
 
 
 def normalize(text: str) -> str:
@@ -81,6 +92,23 @@ def _slug_text(url: str) -> str:
     """Decode the URL path into searchable text (slugs often contain the title)."""
     path = unquote(urlparse(url).path)
     return re.sub(r"[-_/+]", " ", path)
+
+
+def _path_segments(url: str) -> list:
+    path = unquote(urlparse(url).path).strip("/").lower()
+    return [seg for seg in path.split("/") if seg]
+
+
+def _is_listing_url(url: str) -> bool:
+    """Return True for category/tag/blog listing pages that should not be sent."""
+    segments = _path_segments(url)
+    if not segments:
+        return True
+    if any(seg in _TAXONOMY_SEGMENTS for seg in segments):
+        return True
+    if len(segments) == 1 and segments[0] in _LISTING_SEGMENTS:
+        return True
+    return False
 
 
 def _parse_date(raw: str):
@@ -244,9 +272,47 @@ def _collect_sitemap_entries(site_url: str) -> list:
     return []
 
 
+def _expand_listing_candidates(candidates: list, win_start: date, win_end: date) -> list:
+    """Scrape recent listing pages from sitemaps and add article links found inside.
+
+    Some sites keep current articles off the sitemap and only update a blog or
+    article listing page. We inspect a small number of those pages but never
+    return the listing page itself as a match.
+    """
+    expanded = []
+    seen_urls = {c["url"] for c in candidates}
+    fetched = 0
+
+    for candidate in candidates:
+        if fetched >= MAX_LISTING_FETCHES:
+            break
+        if not _is_listing_url(candidate["url"]):
+            continue
+        cand_date = candidate.get("date")
+        if cand_date and (cand_date < win_start or cand_date > win_end):
+            continue
+
+        fetched += 1
+        for row in _scrape_html(candidate["url"]):
+            url = row["url"]
+            if url in seen_urls or _is_listing_url(url):
+                continue
+            seen_urls.add(url)
+            context = row.get("context", "") + " " + row.get("title", "")
+            expanded.append({
+                "title": row["title"],
+                "url": url,
+                "date": sniff_date(context),
+            })
+
+    return expanded + candidates
+
+
 def find_matches(site_url: str, keywords: list, days: int = 1,
                  date_from: str = "", date_to: str = "",
-                 fetch_body: bool = True) -> dict:
+                 fetch_body: bool = True,
+                 max_article_fetches: int = MAX_ARTICLE_FETCHES,
+                 require_date: bool = False) -> dict:
     """
     Discover keyword-matching articles on a site without any search API.
 
@@ -269,7 +335,7 @@ def find_matches(site_url: str, keywords: list, days: int = 1,
         win_end = date.today()
 
     norm_keywords = compile_keywords(keywords)
-    fetch_budget = MAX_ARTICLE_FETCHES
+    fetch_budget = max_article_fetches
 
     entries = _collect_sitemap_entries(site_url)
     method = "sitemap" if entries else "html"
@@ -286,6 +352,8 @@ def find_matches(site_url: str, keywords: list, days: int = 1,
                       for r in scraped]
         if not candidates:
             method = "none"
+
+    candidates = _expand_listing_candidates(candidates, win_start, win_end)
 
     # newest first; undated last (capped — they cost a page fetch to date)
     dated = sorted([c for c in candidates if c["date"]],
@@ -304,6 +372,20 @@ def find_matches(site_url: str, keywords: list, days: int = 1,
             continue
         seen_urls.add(url)
 
+        if _is_listing_url(url):
+            continue
+
+        # Some sitemaps expose only numeric URLs and have a slightly stale
+        # lastmod. If it is near the window, fetch the article metadata before
+        # deciding it is too old.
+        if (c["date"] and c["date"] < win_start and not c["title"]
+                and c["date"] >= win_start - timedelta(days=2)
+                and fetch_budget > 0):
+            fetch_budget -= 1
+            meta_date, meta_title, _ = _fetch_article_page(url)
+            c["date"] = meta_date or c["date"]
+            c["title"] = meta_title or c["title"]
+
         # cheap pre-filter: skip clearly-old dated entries (keep newest-older for reporting)
         if c["date"] and c["date"] < win_start:
             if _matches(c["title"] + " " + _slug_text(url), norm_keywords):
@@ -313,6 +395,13 @@ def find_matches(site_url: str, keywords: list, days: int = 1,
             continue
 
         title_matched = _matches(c["title"] + " " + _slug_text(url), norm_keywords)
+        meta_date, meta_title = None, ""
+        if not title_matched and not c["title"] and c["date"] and fetch_budget > 0:
+            fetch_budget -= 1
+            meta_date, meta_title, _ = _fetch_article_page(url)
+            c["date"] = c["date"] or meta_date
+            c["title"] = c["title"] or meta_title
+            title_matched = _matches(c["title"] + " " + _slug_text(url), norm_keywords)
 
         if title_matched:
             art_date, art_title = c["date"], c["title"]
@@ -321,6 +410,8 @@ def find_matches(site_url: str, keywords: list, days: int = 1,
                 meta_date, meta_title, _ = _fetch_article_page(url)
                 art_date = art_date or meta_date
                 art_title = art_title or meta_title
+            if require_date and not art_date:
+                continue
             if art_date and art_date < win_start:
                 if not latest_older or art_date > latest_older["date"]:
                     latest_older = {"title": art_title or _slug_text(url).strip(),
@@ -344,10 +435,13 @@ def find_matches(site_url: str, keywords: list, days: int = 1,
             fetch_budget -= 1
             meta_date, meta_title, text = _fetch_article_page(c["url"], with_body=True)
             if text and _matches(text, norm_keywords):
+                match_date = c["date"] or meta_date
+                if require_date and not match_date:
+                    continue
                 matches.append({
                     "title": meta_title or c["title"] or _slug_text(c["url"]).strip(),
                     "url": c["url"],
-                    "date": c["date"] or meta_date,
+                    "date": match_date,
                     "via": "body",
                 })
 

@@ -97,6 +97,12 @@ jobs:
           else
             DAYS="1"
           fi
+          # Scheduled daily runs look back 7 days: Google often indexes/dates
+          # articles days late, and a 1-day window lost them forever
+          # (lesson 2026-06-13). Dedup prevents resends.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            DAYS="7"
+          fi
           echo "days=$DAYS" >> $GITHUB_OUTPUT
 
           # Validate date_from and date_to: must match YYYY-MM-DD exactly

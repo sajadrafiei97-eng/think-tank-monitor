@@ -5,5 +5,7 @@ token.json
 .tmp/run_en.log
 .tmp/set_secrets.py
 .tmp/add_gh_token.py
+.tmp/*.html
+.tmp/pycache_check/
 __pycache__/
 *.pyc

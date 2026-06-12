@@ -4,7 +4,7 @@ import re
 import requests
 
 GH_TOKEN = os.environ["GH_TOKEN"]
-REPO     = "sajadrafiei97-eng/think-tank-monitor"
+REPO     = os.environ.get("GITHUB_REPOSITORY", "sajadrafiei97-eng/think-tank-monitor")
 SCHEDULE_FILE = "config_schedule.json"
 
 # ── bot definitions ────────────────────────────────────────────────────────────

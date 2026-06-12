@@ -156,7 +156,7 @@ def _make_tbs(days: int = 1, date_from: str = "", date_to: str = "") -> str:
 
 
 def _serpapi_call(api_key: str, query: str, tbs: str = "", hl: str = "ar",
-                  gl: str = "eg", num: int = 20) -> list:
+                  gl: str = "eg", num: int = 20, start: int = 0) -> list:
     params = {
         "api_key": api_key,
         "engine": "google",
@@ -165,6 +165,8 @@ def _serpapi_call(api_key: str, query: str, tbs: str = "", hl: str = "ar",
         "hl": hl,
         "gl": gl,
     }
+    if start:
+        params["start"] = start
     if tbs:
         params["tbs"] = tbs
     try:
@@ -201,11 +203,9 @@ def _serpapi_call(api_key: str, query: str, tbs: str = "", hl: str = "ar",
     return []
 
 
-def _normalize_url(url: str) -> str:
-    parsed = urlparse(url)
-    host = parsed.netloc.lower().removeprefix("www.")
-    path = parsed.path.rstrip("/")
-    return f"{host}{path}"
+# Shared canonical form — keeps the query string (?p=110057 is the article id
+# on some sites; dropping it once collapsed different articles into one).
+from state import _normalize_url
 
 
 _SITE_BATCH = 3  # sites per sub-query — balance between coverage and competition
@@ -306,7 +306,11 @@ def serpapi_user_query(api_key: str, sites: list, keywords: list,
 
     items = _serpapi_call(api_key, query, hl=hl, gl=gl, num=50)
     if len(items) >= 50:
-        logger.warning("Result page saturated (50) — some results may be cut off")
+        # full first page — the user verified results sit on Google page 2 too
+        logger.info("First page full (50) — fetching page 2")
+        items += _serpapi_call(api_key, query, hl=hl, gl=gl, num=50, start=50)
+        if len(items) >= 100:
+            logger.warning("Both pages saturated (100) — results may be cut off")
 
     allowed_domains = {_domain(s) for s in sites}
     results, seen_norm = [], set()

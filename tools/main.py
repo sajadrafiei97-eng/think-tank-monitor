@@ -8,9 +8,10 @@ from urllib.parse import urlparse
 import yaml
 from dotenv import load_dotenv
 
+from direct_fetch import find_matches
 from notifier import send_batch, send_message
 from search_tool import serpapi_user_query
-from state import filter_new_reports, load_seen_urls, mark_sent
+from state import _normalize_url, filter_new_reports, load_seen_urls, mark_sent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +35,66 @@ def _build_domain_map(think_tanks: list) -> dict:
 def _resolve_source(url: str, domain_map: dict) -> str:
     domain = urlparse(url).netloc.removeprefix("www.")
     return domain_map.get(domain, domain)
+
+
+def _domain(url: str) -> str:
+    return urlparse(url).netloc.removeprefix("www.")
+
+
+def _merge_unique_reports(primary: list, extra: list) -> list:
+    merged = []
+    seen = set()
+    for report in primary + extra:
+        url = report.get("url", "")
+        if not url:
+            continue
+        norm = _normalize_url(url)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        merged.append(report)
+    return merged
+
+
+def _should_run_direct_fallback(args) -> bool:
+    # Direct fetch is useful for manual multi-day reviews where Google may hide
+    # small sites in one large query. Keep the scheduled daily path search-only
+    # to avoid reviving old undated content.
+    custom_range = bool(args.date_from and args.date_to)
+    return args.no_dedup and (custom_range or args.days > 1)
+
+
+def _direct_fallback_results(think_tanks: list, keywords: list, results: list,
+                             args, title_only: bool) -> list:
+    domains_with_results = {_domain(r.get("url", "")) for r in results}
+    direct_results = []
+
+    for tt in think_tanks:
+        domain = _domain(tt["url"])
+        if domain in domains_with_results:
+            continue
+        try:
+            direct = find_matches(tt["url"], keywords,
+                                  days=args.days,
+                                  date_from=args.date_from,
+                                  date_to=args.date_to,
+                                  fetch_body=not title_only,
+                                  max_article_fetches=80,
+                                  require_date=True)
+        except Exception as exc:
+            logger.warning(f"Direct fallback failed for {domain}: {exc}")
+            continue
+
+        for match in direct.get("matches", []):
+            direct_results.append({
+                "title": match.get("title", "").strip(),
+                "url": match.get("url", "").strip(),
+                "_direct": True,
+            })
+        if direct.get("matches"):
+            logger.info(f"Direct fallback: {domain} -> {len(direct['matches'])} match(es)")
+
+    return direct_results
 
 
 def main():
@@ -126,6 +187,13 @@ def main():
                                  days=args.days,
                                  date_from=args.date_from, date_to=args.date_to,
                                  title_only=title_only, hl=hl, gl=gl)
+
+    if _should_run_direct_fallback(args):
+        direct_results = _direct_fallback_results(think_tanks, keywords, results,
+                                                  args, title_only)
+        if direct_results:
+            logger.info(f"Direct fallback added {len(direct_results)} result(s)")
+            results = _merge_unique_reports(results, direct_results)
 
     if not results:
         logger.info("No results found.")

@@ -4,6 +4,6 @@ title Monitor Think Tanks - Run Now
 echo.
 echo در حال اجرای پایش...
 echo.
-python "%~dp0monitor_think_tanks.py"
+python "%~dp0tools\main.py"
 echo.
 pause

@@ -22,6 +22,9 @@ from dotenv import load_dotenv
 
 from direct_fetch import find_matches
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
@@ -58,6 +61,9 @@ if not BOT_TOKEN or not CHAT_ID:
 
 think_tanks = config["think_tanks"]
 keywords    = config["keywords"]
+search_opts = config.get("search_options", {})
+SEARCH_HL   = search_opts.get("hl", "ar")
+SEARCH_GL   = search_opts.get("gl", "eg")
 
 kw_mid      = len(keywords) // 2
 kw_intitle  = [keywords[:kw_mid], keywords[kw_mid:]]
@@ -105,8 +111,8 @@ def _serpapi_call(query: str, days: int) -> tuple[int, str]:
                     "q": query,
                     "num": 10,
                     "tbs": f"qdr:d{days}",
-                    "hl": "ar",
-                    "gl": "eg",
+                    "hl": SEARCH_HL,
+                    "gl": SEARCH_GL,
                 },
                 timeout=25,
             )

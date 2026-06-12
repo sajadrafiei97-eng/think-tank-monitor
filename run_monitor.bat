@@ -1,3 +1,4 @@
 @echo off
-cd /d C:\Users\javad\Claude\Projects\CSS
+cd /d "%~dp0"
+if not exist ".tmp" mkdir ".tmp"
 python tools\main.py >> .tmp\run.log 2>&1

@@ -20,10 +20,13 @@ import requests
 import yaml
 from dotenv import load_dotenv
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-REPO = "sajadrafiei97-eng/think-tank-monitor"
+REPO = os.environ.get("GITHUB_REPOSITORY", "sajadrafiei97-eng/think-tank-monitor")
 HEADERS_UA = {"User-Agent": "Mozilla/5.0 (compatible; ThinkTankMonitor/1.0)"}
 
 problems = []   # things that need attention
@@ -62,8 +65,15 @@ def check_configs():
     return configs
 
 
-def check_serpapi_quota():
-    for label, env in [("عربی", "SERPAPI_KEY"), ("انگلیسی", "SERPAPI_KEY_EN")]:
+def check_serpapi_quota(configs):
+    checked = set()
+    for cfg_name, cfg in configs:
+        label = cfg.get("language_label", cfg_name)
+        creds = cfg.get("credentials", {})
+        env = creds.get("serpapi_key_env", "SERPAPI_KEY")
+        if env in checked:
+            continue
+        checked.add(env)
         key = os.getenv(env, "").strip()
         if not key:
             problems.append(f"کلید جستجوی {label} ({env}) تنظیم نشده")
@@ -81,6 +91,18 @@ def check_serpapi_quota():
                 notes.append(f"سهمیه جستجوی {label}: {left} باقی مانده")
         except Exception as e:
             problems.append(f"بررسی سهمیه {label} ناموفق: {str(e)[:60]}")
+
+
+def check_telegram_credentials(configs):
+    for cfg_name, cfg in configs:
+        label = cfg.get("language_label", cfg_name)
+        creds = cfg.get("credentials", {})
+        token_env = creds.get("telegram_token_env", "TELEGRAM_BOT_TOKEN")
+        chat_env = creds.get("telegram_chat_env", "TELEGRAM_CHAT_ID")
+        missing = [env for env in [token_env, chat_env]
+                   if not os.getenv(env, "").strip()]
+        if missing:
+            problems.append(f"اطلاعات تلگرام {label} تنظیم نشده: {', '.join(missing)}")
 
 
 def check_github_runs():
@@ -147,9 +169,13 @@ def check_seen_files():
 
 def check_sites(configs):
     down = []
+    checked_urls = set()
     for cfg_name, cfg in configs:
         for tt in cfg.get("think_tanks", []):
             url = tt["url"]
+            if url in checked_urls:
+                continue
+            checked_urls.add(url)
             try:
                 r = requests.get(url, headers=HEADERS_UA, timeout=10,
                                  allow_redirects=True, stream=True)
@@ -203,7 +229,8 @@ def main():
 
     check_tools_compile()
     configs = check_configs()
-    check_serpapi_quota()
+    check_serpapi_quota(configs)
+    check_telegram_credentials(configs)
     check_github_runs()
     check_seen_files()
     check_sites(configs)

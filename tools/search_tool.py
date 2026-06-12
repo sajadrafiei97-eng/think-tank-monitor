@@ -194,7 +194,7 @@ def _normalize_url(url: str) -> str:
     return f"{host}{path}"
 
 
-_SITE_BATCH = 5  # sites per sub-query — smaller groups mean less inter-site competition
+_SITE_BATCH = 2  # sites per sub-query — smaller groups mean less inter-site competition
 
 
 def serpapi_search(api_key: str, sites: list, keywords: list, tbs: str = None,

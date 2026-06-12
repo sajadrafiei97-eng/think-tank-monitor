@@ -1,5 +1,5 @@
 {
   "enabled": true,
-  "search_mode_arabic": "title",
+  "search_mode_arabic": "full",
   "search_mode_english": "title"
 }
